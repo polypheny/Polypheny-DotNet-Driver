@@ -1,0 +1,3 @@
+[submodule "PolyphenyDotNetDriver/prism"]
+	path = PolyphenyDotNetDriver/prism
+	url = https://github.com/polypheny/Polypheny-Prism-API.git

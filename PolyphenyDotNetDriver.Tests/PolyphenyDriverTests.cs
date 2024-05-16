@@ -13,4 +13,11 @@ public class PolyphenyDriverTests
         var driver = new PolyphenyDriver();
         Assert.That(driver.Name, Is.EqualTo("PolyphenyDotNetDriver"));
     }
+
+    [Test]
+    public void ShouldGiveCorrectDriverName()
+    {
+        var driver = new PolyphenyDriver();
+        Assert.That(driver.GetDriverName(), Is.EqualTo("PolyphenyDotNetDriver"));
+    }
 }

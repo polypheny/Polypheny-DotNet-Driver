@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.002.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "PolyphenyDotNetDriver", "PolyphenyDotNetDriver.csproj", "{E0CD221C-23EF-4DAB-8F01-4E8B15894880}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{E0CD221C-23EF-4DAB-8F01-4E8B15894880}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E0CD221C-23EF-4DAB-8F01-4E8B15894880}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E0CD221C-23EF-4DAB-8F01-4E8B15894880}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E0CD221C-23EF-4DAB-8F01-4E8B15894880}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {FA20E586-A912-4DB1-B51E-238918E6BC64}
+	EndGlobalSection
+EndGlobal
