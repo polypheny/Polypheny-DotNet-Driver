@@ -1,0 +1,27 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <PackageId>PolyphenyDotNetDriver</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Polypheny</Authors>
+    <Company>Polypheny</Company>
+    <Product>PolyphenyDotNetDriver</Product>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <RepositoryUrl>https://github.com/polypheny/Polypheny-DotNet-Driver</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="..\README.md">
+      <Pack>true</Pack>
+      <PackagePath>README.md</PackagePath>
+    </Content>
+    <Content Include="..\LICENSE">
+      <Pack>true</Pack>
+      <PackagePath>LICENSE</PackagePath>
+    </Content>
+  </ItemGroup>
+
+</Project>
