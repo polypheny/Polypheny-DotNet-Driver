@@ -8,16 +8,19 @@ public class PolyphenyDriverTests
     }
 
     [Test]
-    public void ShouldHaveCorrectName()
+    public void ShouldOpenAndCloseConnection()
     {
-        var driver = new PolyphenyDriver();
-        Assert.That(driver.Name, Is.EqualTo("PolyphenyDotNetDriver"));
+        var connection = new PolyphenyConnection("localhost:20590,pa:");
+        connection.Open();
+        connection.Close();
     }
-
+    
     [Test]
-    public void ShouldGiveCorrectDriverName()
+    public async Task ShouldPingServer()
     {
-        var driver = new PolyphenyDriver();
-        Assert.That(driver.GetDriverName(), Is.EqualTo("PolyphenyDotNetDriver"));
+        var connection = new PolyphenyConnection("localhost:20590,pa:");
+        connection.Open();
+        await connection.Ping();
+        connection.Close();
     }
 }
