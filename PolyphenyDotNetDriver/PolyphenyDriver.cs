@@ -3,20 +3,10 @@
 namespace PolyphenyDotNetDriver
 {
     public class PolyphenyDriver
-    {
-        public string Name { get; set; }
-
-        public PolyphenyDriver()
+    {        
+        public PolyphenyConnection Open(string connectionString)
         {
-            Name = "PolyphenyDotNetDriver";
-        }
-
-        public string GetDriverName()
-        {
-            var protoString = new ProtoString{
-                String = Name
-            };
-            return protoString.String;
+            return new PolyphenyConnection(connectionString);
         }
     }
 }
