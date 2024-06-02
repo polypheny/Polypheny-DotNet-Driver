@@ -24,7 +24,7 @@ namespace PolyphenyDotNetDriver
 
         protected override DbCommand CreateDbCommand()
         {
-            throw new NotImplementedException();
+            return new PolyphenyCommand().WithConnection(this);
         }
 
         private string _connectionString;
@@ -69,18 +69,19 @@ namespace PolyphenyDotNetDriver
             Interlocked.Exchange(ref this._IsConnected, StatusDisconnected);
         }
 
-        public override void Close()
+        public override void Close() => CloseAsync(CancellationToken.None).GetAwaiter().GetResult();
+        protected async Task CloseAsync(CancellationToken cancellationToken)
         {
             var request = new Request()
             {
                 DisconnectRequest = new DisconnectRequest()
             };
-            HelperSendAndRecv(request);
+            await SendRecv(request);
             Interlocked.Exchange(ref this._IsConnected, StatusServerConnected);
 
             try
             {
-                this.Stream.Flush();
+                await this.Stream.FlushAsync(cancellationToken);
                 this.Stream.Close();
             }
             catch (Exception e)
@@ -93,18 +94,20 @@ namespace PolyphenyDotNetDriver
                 Interlocked.Exchange(ref this._IsConnected, StatusDisconnected);
             }
         }
+        
+        public override void Open() => OpenAsync(CancellationToken.None).GetAwaiter().GetResult();
 
-        public override void Open()
+        public override async Task OpenAsync(CancellationToken cancellationToken)
         {
             this.Client = new TcpClient(this.Hostname, this.Port);
             this.Stream = this.Client.GetStream();
             Interlocked.Exchange(ref this._IsConnected, StatusServerConnected);
 
-            var recvVersion = this.Receive(1);
+            var recvVersion = await this.RawReceive(1);
 
             var sendVersion = System.Text.Encoding.ASCII.GetBytes(TransportVersion);
             Console.WriteLine(sendVersion);
-            this.Send(sendVersion, 1);
+            await this.RawSend(sendVersion, 1);
 
             if (!recvVersion.SequenceEqual(sendVersion))
             {
@@ -127,8 +130,7 @@ namespace PolyphenyDotNetDriver
                 }
             };
 
-            var response = HelperSendAndRecv(request);
-            Console.WriteLine(response);
+            await SendRecv(request);
             Interlocked.Exchange(ref this._IsConnected, StatusPolyphenyConnected);
         }
 
@@ -147,8 +149,8 @@ namespace PolyphenyDotNetDriver
                         {
                             ConnectionCheckRequest = new ConnectionCheckRequest()
                         };
-                        var task = Task.Run(() => HelperSendAndRecv(request), cancellationToken);
-                        await task;
+                        // TODO: use cancellationToken
+                        await SendRecv(request);
                         break;
                     }
             }
@@ -180,7 +182,7 @@ namespace PolyphenyDotNetDriver
             this.Password = usernameAndPassword[1];
         }
 
-        protected byte[] Receive(int lengthSize)
+        protected async Task<byte[]> RawReceive(int lengthSize)
         {
             if (lengthSize > 8)
             {
@@ -189,7 +191,7 @@ namespace PolyphenyDotNetDriver
 
             var lengthBuf = new byte[8];
             var length = new byte[lengthSize];
-            var bytesRead = this.Stream.Read(length, 0, lengthSize);
+            var bytesRead = await this.Stream.ReadAsync(length, 0, lengthSize);
             if (bytesRead != lengthSize)
             {
                 Console.WriteLine(bytesRead + ":" + lengthSize);
@@ -206,7 +208,7 @@ namespace PolyphenyDotNetDriver
 
             var recvLength = BitConverter.ToUInt64(lengthBuf, 0);
             var buf = new byte[recvLength];
-            bytesRead = this.Stream.Read(buf, 0, (int)recvLength);
+            bytesRead = await this.Stream.ReadAsync(buf, 0, (int)recvLength);
             if ((ulong)bytesRead != recvLength)
             {
                 throw new Exception("Failed to read the specified number of bytes");
@@ -215,7 +217,7 @@ namespace PolyphenyDotNetDriver
             return buf;
         }
 
-        protected void Send(byte[] serialized, int lengthSize)
+        protected async Task RawSend(byte[] serialized, int lengthSize)
         {
             if (lengthSize > 8)
             {
@@ -239,18 +241,29 @@ namespace PolyphenyDotNetDriver
                 length[i] = lengthBuf[i];
             }
 
-            this.Stream.Write(length, 0, length.Length);
-            this.Stream.Write(serialized, 0, serialized.Length);
+            await this.Stream.WriteAsync(length, 0, length.Length);
+            await this.Stream.WriteAsync(serialized, 0, serialized.Length);
         }
 
-        protected Response HelperSendAndRecv(Request m)
+        public async Task Send(Request req, int lengthSize=8)
         {
-            var buf = m.ToByteArray();
-            this.Send(buf, 8);
-            var recv = this.Receive(8);
+            var buf = req.ToByteArray();
+            await this.RawSend(buf, lengthSize);
+        }
+        
+        // add default lengthSize
+        public async Task<Response> Receive(int lengthSize=8)
+        {
+            var recv = await this.RawReceive(lengthSize);
             var parser = new MessageParser<Response>(() => new Response());
             var result = parser.ParseFrom(recv);
             return result;
+        }
+
+        public async Task<Response> SendRecv(Request m)
+        {
+            await this.Send(m);
+            return await this.Receive();
         }
     }
 }
