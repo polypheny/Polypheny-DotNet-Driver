@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
 using System.Threading;
 using System.Threading.Tasks;
+using Google.Protobuf.Collections;
 using Polypheny.Prism;
 
 namespace PolyphenyDotNetDriver
@@ -20,6 +22,12 @@ namespace PolyphenyDotNetDriver
             this.CommandText = commandText;
             return this;
         }
+
+        public PolyphenyCommand WithParameterValues(object[] values)
+        {
+            this.ParameterValues = values;
+            return this;
+        }
         
         // TODO: with Polypheny Transaction
         
@@ -29,7 +37,7 @@ namespace PolyphenyDotNetDriver
         }
 
         public override int ExecuteNonQuery() => ExecuteNonQueryAsync(CancellationToken.None).GetAwaiter().GetResult();
-
+        
         public override async Task<int> ExecuteNonQueryAsync(CancellationToken cancellationToken)
         {
             if (PolyphenyConnection == null)
@@ -37,6 +45,18 @@ namespace PolyphenyDotNetDriver
                 throw new InvalidOperationException("Connection property must be non-null");
             }
 
+            if (!_isPrepared)
+            {
+                return await ExecuteNonQueryAsyncUnprepared(cancellationToken);
+            }
+            else
+            {
+                return await ExecuteNonQueryAsyncPrepared(cancellationToken);
+            }
+        }
+
+        private async Task<int> ExecuteNonQueryAsyncUnprepared(CancellationToken cancellationToken)
+        {
             var request = new Request()
             {
                 ExecuteUnparameterizedStatementRequest = new ExecuteUnparameterizedStatementRequest()
@@ -52,7 +72,7 @@ namespace PolyphenyDotNetDriver
             var newResponse = await this.PolyphenyConnection.Receive();
             if (newResponse?.StatementResponse?.StatementId != tmpId)
             {
-                return -1;
+                throw new Exception("StatementId mismatch");
             }
 
             var stmtResult = newResponse?.StatementResponse?.Result;
@@ -60,27 +80,71 @@ namespace PolyphenyDotNetDriver
             
             return (int)result.RowsAffected;
         }
+        
+        private async Task<int> ExecuteNonQueryAsyncPrepared(CancellationToken cancellationToken)
+        {
+            if (this.ParameterValues == null || this._statementId == null)
+            {
+                throw new InvalidOperationException("ParameterValues and private StatementId property must be non-null");
+            }
+            
+            this._parameterCollection.FillParameterValues(this.ParameterValues);
+            var protoValues = this._parameterCollection.ToProtoValues();
+            
+            var request = new Request()
+            {
+                ExecuteIndexedStatementRequest = new ExecuteIndexedStatementRequest()
+                {
+                    StatementId = this._statementId.Value,
+                    Parameters = new IndexedParameters()
+                    {
+                        Parameters = { protoValues }                    
+                    }
+                }
+            };
+
+            var response = await this.PolyphenyConnection.SendRecv(request);
+            var statementResult = response?.StatementResult;
+            var rowAffected = statementResult?.Scalar;
+            
+            if (rowAffected == null)
+            {
+                throw new Exception("No rows affected");
+            }
+            
+            return (int)rowAffected;
+        }
 
         public override object ExecuteScalar()
         {
             throw new System.NotImplementedException();
         }
 
-        public override void Prepare()
+        public override void Prepare() => PrepareAsync(CancellationToken.None).GetAwaiter().GetResult();
+
+        private async Task PrepareAsync(CancellationToken cancellationToken)
         {
+            if (PolyphenyConnection == null)
+            {
+                throw new InvalidOperationException("Connection property must be non-null");
+            }
+
+            var request = new Request()
+            {
+                PrepareIndexedStatementRequest = new PrepareStatementRequest()
+                {
+                    LanguageName = "sql",
+                    Statement = CommandText,
+                }
+            };
             
-        } //=> PrepareAsync(CancellationToken.None).GetAwaiter().GetResult();
-        
-        // protected async Task PrepareAsync(CancellationToken cancellationToken)
-        // {
-        //     if (PolyphenyConnection == null)
-        //     {
-        //         throw new InvalidOperationException("Connection property must be non-null");
-        //     }
-        //     
-        //     // TODO
-        //     
-        // }
+            var response = await this.PolyphenyConnection.SendRecv(request);
+            var parameterMetas = response?.PreparedStatementSignature?.ParameterMetas;
+            var parameterCollections = PolyphenyParameterCollection.FromParameterMetas(parameterMetas);
+            this._parameterCollection = parameterCollections;
+            this._statementId = response?.PreparedStatementSignature?.StatementId;
+            this._isPrepared = true;
+        }
 
         public override string CommandText { get; set; } = string.Empty;
         public override int CommandTimeout { get; set; } = 30;
@@ -104,9 +168,13 @@ namespace PolyphenyDotNetDriver
             }
         }
 
-        protected override DbParameterCollection DbParameterCollection { get; }
+        private bool _isPrepared = false;
+        private int? _statementId = null;
+        private PolyphenyParameterCollection _parameterCollection;
+        protected override DbParameterCollection DbParameterCollection => this._parameterCollection;
         protected override DbTransaction DbTransaction { get; set; }
         public override bool DesignTimeVisible { get; set; }
+        public object[] ParameterValues { get; private set; }
 
         protected override DbParameter CreateDbParameter()
         {
