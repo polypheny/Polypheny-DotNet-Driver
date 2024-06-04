@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Google.Protobuf;
 using Polypheny.Prism;
+using Version = Polypheny.Prism.Version;
 
 namespace PolyphenyDotNetDriver
 {
@@ -47,8 +48,6 @@ namespace PolyphenyDotNetDriver
         public int IsConnected => this._IsConnected;
 
         protected const string TransportVersion = "plain-v1@polypheny.com\n";
-        protected const int MajorApiVersion = 1;
-        protected const int MinorApiVersion = 9;
 
         protected const int StatusDisconnected = 0;
         protected const int StatusServerConnected = 1;
@@ -123,8 +122,8 @@ namespace PolyphenyDotNetDriver
             {
                 ConnectionRequest = new ConnectionRequest()
                 {
-                    MajorApiVersion = MajorApiVersion,
-                    MinorApiVersion = MinorApiVersion,
+                    MajorApiVersion = Convert.ToInt32(Version.Major),
+                    MinorApiVersion = Convert.ToInt32(Version.Minor),
                     Username = this.Username,
                     Password = this.Password,
                 }

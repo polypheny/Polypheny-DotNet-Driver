@@ -122,7 +122,7 @@ namespace PolyphenyDotNetDriver
 
         public override void Prepare() => PrepareAsync(CancellationToken.None).GetAwaiter().GetResult();
 
-        private async Task PrepareAsync(CancellationToken cancellationToken)
+        public override async Task PrepareAsync(CancellationToken cancellationToken)
         {
             if (PolyphenyConnection == null)
             {
