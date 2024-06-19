@@ -151,7 +151,7 @@ namespace PolyphenyDotNetDriver
         public override CommandType CommandType { get; set; } = CommandType.Text;
         public override UpdateRowSource UpdatedRowSource { get; set; } = UpdateRowSource.Both;
 
-        protected PolyphenyConnection PolyphenyConnection;
+        public PolyphenyConnection PolyphenyConnection { get; protected set; }
         protected override DbConnection DbConnection
         {
             get => this.PolyphenyConnection;
@@ -181,9 +181,20 @@ namespace PolyphenyDotNetDriver
             throw new System.NotImplementedException();
         }
 
-        protected override DbDataReader ExecuteDbDataReader(CommandBehavior behavior)
+        protected override DbDataReader ExecuteDbDataReader(CommandBehavior behavior) => ExecuteReader(behavior);
+
+        protected override async Task<DbDataReader> ExecuteDbDataReaderAsync(CommandBehavior behavior,
+            CancellationToken cancellationToken) => await ExecuteReaderAsync(behavior, cancellationToken);
+
+        public new PolyphenyDataReader ExecuteReader() => ExecuteReader(CommandBehavior.Default);
+        
+        public new PolyphenyDataReader ExecuteReader(CommandBehavior behavior) => ExecuteReaderAsync(behavior, CancellationToken.None).GetAwaiter().GetResult();
+
+        private new async Task<PolyphenyDataReader> ExecuteReaderAsync(CommandBehavior behavior, CancellationToken cancellationToken)
         {
-            throw new System.NotImplementedException();
+            var reader = new PolyphenyDataReader(this);
+            await reader.NextResultAsync(cancellationToken);
+            return reader;
         }
     }
 }
