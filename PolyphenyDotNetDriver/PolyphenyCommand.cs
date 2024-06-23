@@ -4,7 +4,6 @@ using System.Data;
 using System.Data.Common;
 using System.Threading;
 using System.Threading.Tasks;
-using Google.Protobuf.Collections;
 using Polypheny.Prism;
 
 namespace PolyphenyDotNetDriver
@@ -195,6 +194,55 @@ namespace PolyphenyDotNetDriver
             var reader = new PolyphenyDataReader(this);
             await reader.NextResultAsync(cancellationToken);
             return reader;
+        }
+
+        public Dictionary<object, object>[] ExecuteQueryMongo() => ExecuteQueryMongoAsync(CancellationToken.None).GetAwaiter().GetResult();
+        private async Task<Dictionary<object, object>[]> ExecuteQueryMongoAsync(CancellationToken cancellationToken)
+        {
+            if (PolyphenyConnection == null)
+            {
+                throw new InvalidOperationException("Connection property must be non-null");
+            }
+
+            var request = new Request()
+            {
+                ExecuteUnparameterizedStatementRequest = new ExecuteUnparameterizedStatementRequest()
+                {
+                    LanguageName                    = "mongo",
+                    Statement = CommandText,
+                }
+            };
+            
+            var response = await this.PolyphenyConnection.SendRecv(request);
+            var tmpId = response?.StatementResponse?.StatementId;
+            
+            var newResponse = await this.PolyphenyConnection.Receive();
+            if (newResponse?.StatementResponse?.StatementId != tmpId)
+            {
+                throw new Exception("StatementId mismatch");
+            }
+
+            var documentFrame = newResponse?.StatementResponse?.Result?.Frame?.DocumentFrame;
+            if (documentFrame == null)
+            {
+                throw new Exception("Query should return document data, however the result is empty");
+            }
+
+            var documents = documentFrame.Documents;
+            var result = new Dictionary<object, object>[documents.Count];
+            for (var i = 0; i < documents.Count; i++)
+            {
+                var currentRow = new Dictionary<object, object>();
+                foreach (var entry in documents[i].Entries)
+                {
+                    var key = ProtoHelper.FromProtoValue(entry.Key);
+                    var value = ProtoHelper.FromProtoValue(entry.Value);
+                    currentRow[key] = value;
+                }
+                result[i] = currentRow;
+            }
+
+            return result;
         }
     }
 }
