@@ -181,4 +181,29 @@ public class PolyphenyDriverTests
         connection.Close();
         return Task.CompletedTask;
     }
+
+    [Test]
+    public Task ShouldAbleToQueryMongo()
+    {
+        var connection = PolyphenyDriver.OpenConnection("localhost:20590,pa:");
+        connection.Open();
+
+        var command = new PolyphenyCommand().
+            WithConnection(connection).
+            WithCommandText("db.emps.find()");
+        var result = command.ExecuteQueryMongo();
+        Assert.That(result, Is.Not.Null);
+
+        foreach (var doc in result)
+        {
+            foreach(var entry in doc)
+            {
+                Console.WriteLine(entry.Key + " : " + entry.Value);
+            }
+            Console.WriteLine("=====================================");
+        }
+
+        connection.Close();
+        return Task.CompletedTask;
+    }
 }
