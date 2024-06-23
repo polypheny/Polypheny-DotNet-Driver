@@ -208,7 +208,7 @@ namespace PolyphenyDotNetDriver
             {
                 ExecuteUnparameterizedStatementRequest = new ExecuteUnparameterizedStatementRequest()
                 {
-                    LanguageName                    = "mongo",
+                    LanguageName = "mongo",
                     Statement = CommandText,
                 }
             };

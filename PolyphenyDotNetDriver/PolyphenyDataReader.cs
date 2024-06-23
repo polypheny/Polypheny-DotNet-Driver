@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Data;
 using System.Data.Common;
 using System.Linq;
 using System.Threading;
@@ -96,7 +97,7 @@ namespace PolyphenyDotNetDriver
 
         public override string GetDataTypeName(int ordinal)
         {
-            throw new NotImplementedException();
+            return GetValue(ordinal).GetType().ToString();
         }
 
         public override DateTime GetDateTime(int ordinal)
@@ -234,9 +235,9 @@ namespace PolyphenyDotNetDriver
 
         public override int FieldCount => this.ResultSets != null ? this.ResultSets.Columns.Length : 0;
 
-        public override object this[int ordinal] => throw new NotImplementedException();
+        public override object this[int ordinal] => GetValue(ordinal);
 
-        public override object this[string name] => throw new NotImplementedException();
+        public override object this[string name] => GetValue(GetOrdinal(name));
 
         public override int RecordsAffected => 0;
         public override bool HasRows => this.ResultSets != null && !this.ResultSets.Finish();
@@ -274,7 +275,7 @@ namespace PolyphenyDotNetDriver
 
         public override IEnumerator GetEnumerator()
         {
-            throw new NotImplementedException();
+            return new DbEnumerator(this);
         }
 
         private async Task Fetch()
