@@ -151,7 +151,7 @@ namespace PolyphenyDotNetDriver
         public override CommandType CommandType { get; set; } = CommandType.Text;
         public override UpdateRowSource UpdatedRowSource { get; set; } = UpdateRowSource.Both;
 
-        public PolyphenyConnection PolyphenyConnection { get; protected set; }
+        public PolyphenyConnection PolyphenyConnection { get; private set; }
         protected override DbConnection DbConnection
         {
             get => this.PolyphenyConnection;
@@ -178,7 +178,7 @@ namespace PolyphenyDotNetDriver
 
         protected override DbParameter CreateDbParameter()
         {
-            throw new System.NotImplementedException();
+            return new PolyphenyParameter();
         }
 
         protected override DbDataReader ExecuteDbDataReader(CommandBehavior behavior) => ExecuteReader(behavior);

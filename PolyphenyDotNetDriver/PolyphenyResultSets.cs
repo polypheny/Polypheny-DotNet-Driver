@@ -7,42 +7,42 @@ namespace PolyphenyDotNetDriver;
 
 public class PolyphenyResultSets
 {
-    private object[][] result;
-    private int index;
+    private readonly object[][] _result;
+    private int _index;
 
     public string[] Columns { get; }
 
     public PolyphenyResultSets(string[] columns, object[][] result)
     {
         this.Columns = columns;
-        this.result = result;
-        this.index = 0;
+        this._result = result;
+        this._index = 0;
     }
 
     public bool Finish()
     {
-        return this.index >= result.Length;
+        return this._index >= _result.Length;
     }
 
     public object[] GetCurrent()
     {
-        if (index < 0 || index >= result.Length)
+        if (_index < 0 || _index >= _result.Length)
             throw new IndexOutOfRangeException();
 
-        return result[index];
+        return _result[_index];
     }
     
     public object GetByOrdinal(int ordinal)
     {
-        if (index < 0 || index >= result.Length || ordinal < 0 || ordinal >= Columns.Length)
+        if (_index < 0 || _index >= _result.Length || ordinal < 0 || ordinal >= Columns.Length)
             throw new IndexOutOfRangeException();
 
-        return result[index][ordinal];
+        return _result[_index][ordinal];
     }
     
     public bool Next()
     {
-        Interlocked.Increment(ref index);
-        return index >= 0 && index < result.Length;
+        Interlocked.Increment(ref _index);
+        return _index >= 0 && _index < _result.Length;
     }
 }

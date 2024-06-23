@@ -39,49 +39,64 @@ namespace PolyphenyDotNetDriver
             }
         }
 
-        public override string Database { get; }
-        public override ConnectionState State { get; }
-        public override string DataSource { get; }
-        public override string ServerVersion { get; }
+        public override string Database => "PolyphenyDatabase";
 
-        protected int _IsConnected = StatusDisconnected;
-        public int IsConnected => this._IsConnected;
+        public override ConnectionState State
+        {
+            get
+            {
+                return this._isConnected switch
+                {
+                    StatusDisconnected => ConnectionState.Closed,
+                    StatusServerConnected => ConnectionState.Connecting,
+                    StatusPolyphenyConnected => ConnectionState.Open,
+                    _ => ConnectionState.Broken
+                };
+            }
+        }
 
-        protected const string TransportVersion = "plain-v1@polypheny.com\n";
+        public override string DataSource => "PolyphenyDataSource";
+        public override string ServerVersion => TransportVersion;
 
-        protected const int StatusDisconnected = 0;
-        protected const int StatusServerConnected = 1;
-        protected const int StatusPolyphenyConnected = 2;
+        private int _isConnected = StatusDisconnected;
+        public int IsConnected => this._isConnected;
 
-        protected string Hostname;
-        protected int Port;
-        protected string Username;
-        protected string Password;
+        private const string TransportVersion = "plain-v1@polypheny.com\n";
 
-        protected TcpClient Client;
-        protected NetworkStream Stream;
+        private const int StatusDisconnected = 0;
+        private const int StatusServerConnected = 1;
+        private const int StatusPolyphenyConnected = 2;
+
+        private string _hostname;
+        private int _port;
+        private string _username;
+        private string _password;
+
+        private TcpClient _client;
+        private NetworkStream _stream;
 
         public PolyphenyConnection(string connectionString)
         {
             this._connectionString = connectionString;
             UpdateConnectionString();
-            Interlocked.Exchange(ref this._IsConnected, StatusDisconnected);
+            Interlocked.Exchange(ref this._isConnected, StatusDisconnected);
         }
 
         public override void Close() => CloseAsync(CancellationToken.None).GetAwaiter().GetResult();
-        protected async Task CloseAsync(CancellationToken cancellationToken)
+
+        private async Task CloseAsync(CancellationToken cancellationToken)
         {
             var request = new Request()
             {
                 DisconnectRequest = new DisconnectRequest()
             };
             await SendRecv(request);
-            Interlocked.Exchange(ref this._IsConnected, StatusServerConnected);
+            Interlocked.Exchange(ref this._isConnected, StatusServerConnected);
 
             try
             {
-                await this.Stream.FlushAsync(cancellationToken);
-                this.Stream.Close();
+                await this._stream.FlushAsync(cancellationToken);
+                this._stream.Close();
             }
             catch (Exception e)
             {
@@ -89,8 +104,8 @@ namespace PolyphenyDotNetDriver
             }
             finally
             {
-                this.Client.Close();
-                Interlocked.Exchange(ref this._IsConnected, StatusDisconnected);
+                this._client.Close();
+                Interlocked.Exchange(ref this._isConnected, StatusDisconnected);
             }
         }
         
@@ -98,14 +113,13 @@ namespace PolyphenyDotNetDriver
 
         public override async Task OpenAsync(CancellationToken cancellationToken)
         {
-            this.Client = new TcpClient(this.Hostname, this.Port);
-            this.Stream = this.Client.GetStream();
-            Interlocked.Exchange(ref this._IsConnected, StatusServerConnected);
+            this._client = new TcpClient(this._hostname, this._port);
+            this._stream = this._client.GetStream();
+            Interlocked.Exchange(ref this._isConnected, StatusServerConnected);
 
             var recvVersion = await this.RawReceive(1);
 
             var sendVersion = System.Text.Encoding.ASCII.GetBytes(TransportVersion);
-            Console.WriteLine(sendVersion);
             await this.RawSend(sendVersion, 1);
 
             if (!recvVersion.SequenceEqual(sendVersion))
@@ -113,29 +127,24 @@ namespace PolyphenyDotNetDriver
                 throw new Exception("The transport version is incompatible with server");
             }
 
-            Console.WriteLine("correct version");
-            Console.WriteLine(recvVersion.ToString() + recvVersion.Length);
-            Console.WriteLine(sendVersion.ToString() + sendVersion.Length);
-            Console.WriteLine(TransportVersion);
-
             var request = new Request()
             {
                 ConnectionRequest = new ConnectionRequest()
                 {
                     MajorApiVersion = Convert.ToInt32(Version.Major),
                     MinorApiVersion = Convert.ToInt32(Version.Minor),
-                    Username = this.Username,
-                    Password = this.Password,
+                    Username = this._username,
+                    Password = this._password,
                 }
             };
 
             await SendRecv(request);
-            Interlocked.Exchange(ref this._IsConnected, StatusPolyphenyConnected);
+            Interlocked.Exchange(ref this._isConnected, StatusPolyphenyConnected);
         }
 
         public async Task Ping(CancellationToken cancellationToken = default)
         {
-            var status = this._IsConnected;
+            var status = this._isConnected;
             switch (status)
             {
                 case StatusDisconnected:
@@ -155,33 +164,33 @@ namespace PolyphenyDotNetDriver
             }
         }
 
-        protected void UpdateConnectionString()
+        private void UpdateConnectionString()
         {
-            var splitted = ConnectionString.Split(',');
-            if (splitted.Length != 2)
+            var split = ConnectionString.Split(',');
+            if (split.Length != 2)
             {
                 throw new Exception("Invalid connection string");
             }
 
-            var hostnameAndPort = splitted[0].Split(':');
+            var hostnameAndPort = split[0].Split(':');
             if (hostnameAndPort.Length != 2)
             {
                 throw new Exception("Invalid connection string");
             }
 
-            var usernameAndPassword = splitted[1].Split(':');
+            var usernameAndPassword = split[1].Split(':');
             if (usernameAndPassword.Length != 2)
             {
                 throw new Exception("Invalid connection string");
             }
 
-            this.Hostname = hostnameAndPort[0];
-            this.Port = int.Parse(hostnameAndPort[1]);
-            this.Username = usernameAndPassword[0];
-            this.Password = usernameAndPassword[1];
+            this._hostname = hostnameAndPort[0];
+            this._port = int.Parse(hostnameAndPort[1]);
+            this._username = usernameAndPassword[0];
+            this._password = usernameAndPassword[1];
         }
 
-        protected async Task<byte[]> RawReceive(int lengthSize)
+        private async Task<byte[]> RawReceive(int lengthSize)
         {
             if (lengthSize > 8)
             {
@@ -190,14 +199,13 @@ namespace PolyphenyDotNetDriver
 
             var lengthBuf = new byte[8];
             var length = new byte[lengthSize];
-            var bytesRead = await this.Stream.ReadAsync(length, 0, lengthSize);
+            var bytesRead = await _stream.ReadAsync(length.AsMemory(0, lengthSize));
             if (bytesRead != lengthSize)
             {
-                Console.WriteLine(bytesRead + ":" + lengthSize);
                 throw new Exception("Failed to read the specified number of bytes");
             }
 
-            for (int i = 0; i < lengthBuf.Length; i++)
+            for (var i = 0; i < lengthBuf.Length; i++)
             {
                 if (i < lengthSize)
                     lengthBuf[i] = length[i];
@@ -207,7 +215,7 @@ namespace PolyphenyDotNetDriver
 
             var recvLength = BitConverter.ToUInt64(lengthBuf, 0);
             var buf = new byte[recvLength];
-            bytesRead = await this.Stream.ReadAsync(buf, 0, (int)recvLength);
+            bytesRead = await _stream.ReadAsync(buf.AsMemory(0, (int)recvLength));
             if ((ulong)bytesRead != recvLength)
             {
                 throw new Exception("Failed to read the specified number of bytes");
@@ -216,7 +224,7 @@ namespace PolyphenyDotNetDriver
             return buf;
         }
 
-        protected async Task RawSend(byte[] serialized, int lengthSize)
+        private async Task RawSend(byte[] serialized, int lengthSize)
         {
             if (lengthSize > 8)
             {
@@ -235,13 +243,13 @@ namespace PolyphenyDotNetDriver
 
             BitConverter.GetBytes((ulong)lenSerialized).CopyTo(lengthBuf, 0);
 
-            for (int i = 0; i < lengthSize; i++)
+            for (var i = 0; i < lengthSize; i++)
             {
                 length[i] = lengthBuf[i];
             }
 
-            await this.Stream.WriteAsync(length, 0, length.Length);
-            await this.Stream.WriteAsync(serialized, 0, serialized.Length);
+            await _stream.WriteAsync(length);
+            await _stream.WriteAsync(serialized);
         }
 
         public async Task Send(Request req, int lengthSize=8)

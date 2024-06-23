@@ -4,7 +4,7 @@ namespace PolyphenyDotNetDriver
 {
     public class PolyphenyDriver
     {        
-        public PolyphenyConnection Open(string connectionString)
+        public static PolyphenyConnection OpenConnection(string connectionString)
         {
             return new PolyphenyConnection(connectionString);
         }

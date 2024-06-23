@@ -4,7 +4,7 @@ using Polypheny.Prism;
 
 namespace PolyphenyDotNetDriver
 {
-    public class ProtoHelper
+    public static class ProtoHelper
     {
         public static PolyphenyResult FormatResult(Polypheny.Prism.StatementResult result)
         {

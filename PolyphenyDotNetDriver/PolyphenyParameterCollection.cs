@@ -9,7 +9,7 @@ namespace PolyphenyDotNetDriver
 {
     public class PolyphenyParameterCollection: DbParameterCollection
     {
-        private List<PolyphenyParameter> _parameters = new List<PolyphenyParameter>();
+        private readonly List<PolyphenyParameter> _parameters = new List<PolyphenyParameter>();
         
         public static PolyphenyParameterCollection FromParameterMetas(IEnumerable<ParameterMeta> metas)
         {
@@ -51,7 +51,7 @@ namespace PolyphenyDotNetDriver
         
         public override int Add(object value)
         {
-            if (!(value is PolyphenyParameter parameter))
+            if (value is not PolyphenyParameter parameter)
             {
                 throw new ArgumentException("value must be a PolyphenyParameter");
             }
@@ -72,7 +72,7 @@ namespace PolyphenyDotNetDriver
 
         public override bool Contains(object value)
         {
-            if (!(value is PolyphenyParameter parameter))
+            if (value is not PolyphenyParameter parameter)
             {
                 throw new ArgumentException("value must be a PolyphenyParameter");
             }
@@ -82,7 +82,7 @@ namespace PolyphenyDotNetDriver
 
         public override int IndexOf(object value)
         {
-            if (!(value is PolyphenyParameter parameter))
+            if (value is not PolyphenyParameter parameter)
             {
                 throw new ArgumentException("value must be a PolyphenyParameter");
             }
@@ -92,7 +92,7 @@ namespace PolyphenyDotNetDriver
 
         public override void Insert(int index, object value)
         {
-            if (!(value is PolyphenyParameter parameter))
+            if (value is not PolyphenyParameter parameter)
             {
                 throw new ArgumentException("value must be a PolyphenyParameter");
             }
@@ -102,7 +102,7 @@ namespace PolyphenyDotNetDriver
 
         public override void Remove(object value)
         {
-            if (!(value is PolyphenyParameter parameter))
+            if (value is not PolyphenyParameter parameter)
             {
                 throw new ArgumentException("value must be a PolyphenyParameter");
             }
@@ -127,7 +127,7 @@ namespace PolyphenyDotNetDriver
                 throw new IndexOutOfRangeException();
             }
             
-            if (!(value is PolyphenyParameter parameter))
+            if (value is not PolyphenyParameter parameter)
             {
                 throw new ArgumentException("value must be a PolyphenyParameter");
             }
@@ -145,7 +145,7 @@ namespace PolyphenyDotNetDriver
 
         public override int IndexOf(string parameterName)
         {
-            for (int i = 0; i < this._parameters.Count; i++)
+            for (var i = 0; i < this._parameters.Count; i++)
             {
                 if (this._parameters[i].ParameterName == parameterName)
                 {
@@ -178,7 +178,6 @@ namespace PolyphenyDotNetDriver
 
         protected override DbParameter GetParameter(string parameterName)
         {
-            // return this._parameters[this.IndexOf(parameterName)];
             return this.GetParameter(this.IndexOf(parameterName));
         }
 

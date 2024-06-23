@@ -12,12 +12,13 @@ namespace PolyphenyDotNetDriver
     public class PolyphenyDataReader: DbDataReader
     {
         private bool _isOpen = true;
-        private PolyphenyCommand cmd;
+        private readonly PolyphenyCommand _cmd;
         public PolyphenyResultSets ResultSets { get; private set; } = null;
+        public string[] Columns => this.ResultSets?.Columns;
 
         public PolyphenyDataReader(PolyphenyCommand cmd)
         {
-            this.cmd = cmd;
+            this._cmd = cmd;
         }
         
         public override bool GetBoolean(int ordinal)
@@ -248,16 +249,11 @@ namespace PolyphenyDotNetDriver
             if (IsClosed)
                 throw new Exception("DataReader is closed");
 
-            if (this.ResultSets == null)
-            {
-                await Fetch();
-                return this.ResultSets != null && !this.ResultSets.Finish();
-            }
+            if (this.ResultSets != null) return !this.ResultSets.Finish() && this.ResultSets.Next();
             
-            if (this.ResultSets.Finish())
-                return false;
+            await Fetch();
+            return this.ResultSets != null && !this.ResultSets.Finish();
 
-            return this.ResultSets.Next();
         }
 
         public override bool Read() => ReadAsync(CancellationToken.None).GetAwaiter().GetResult();
@@ -267,16 +263,11 @@ namespace PolyphenyDotNetDriver
             if (IsClosed)
                 throw new Exception("DataReader is closed");
 
-            if (this.ResultSets == null)
-            {
-                await Fetch();
-                return this.ResultSets != null && !this.ResultSets.Finish();
-            }
+            if (this.ResultSets != null) return !this.ResultSets.Finish() && this.ResultSets.Next();
             
-            if (this.ResultSets.Finish())
-                return false;
+            await Fetch();
+            return this.ResultSets != null && !this.ResultSets.Finish();
 
-            return this.ResultSets.Next();
         }
 
         public override int Depth => 0;
@@ -293,22 +284,20 @@ namespace PolyphenyDotNetDriver
                 ExecuteUnparameterizedStatementRequest = new ExecuteUnparameterizedStatementRequest()
                 {
                     LanguageName = "sql",
-                    Statement = this.cmd.CommandText,
+                    Statement = this._cmd.CommandText,
                 }
             };
 
-            var response = await this.cmd.PolyphenyConnection.SendRecv(request);
-            Console.WriteLine("response"+response);
+            var response = await this._cmd.PolyphenyConnection.SendRecv(request);
             var tmpId = response?.StatementResponse?.StatementId;
 
-            var newResponse = await this.cmd.PolyphenyConnection.Receive(8);
+            var newResponse = await this._cmd.PolyphenyConnection.Receive(8);
             var statementId = newResponse?.StatementResponse?.StatementId;
             if (statementId != tmpId)
             {
                 throw new Exception("StatementID mismatch");
             }
 
-            Console.WriteLine(newResponse);
             var resultSets = ExtractResultSet(newResponse);
             this.ResultSets = resultSets;
         }
@@ -328,6 +317,12 @@ namespace PolyphenyDotNetDriver
             var values = rows.Select(x => x.Values.Select(ProtoHelper.FromProtoValue).ToArray()).ToArray();
 
             return new PolyphenyResultSets(columns, values);
+        }
+        
+        public override void Close()
+        {
+            _isOpen = false;
+            base.Close();
         }
     }
 }

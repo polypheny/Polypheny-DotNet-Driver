@@ -10,7 +10,7 @@ public class PolyphenyDriverTests
     [Test]
     public void ShouldOpenAndCloseConnection()
     {
-        var connection = new PolyphenyConnection("localhost:20590,pa:");
+        var connection = PolyphenyDriver.OpenConnection("localhost:20590,pa:");
         connection.Open();
         connection.Close();
     }
@@ -18,7 +18,7 @@ public class PolyphenyDriverTests
     [Test]
     public async Task ShouldPingServer()
     {
-        var connection = new PolyphenyConnection("localhost:20590,pa:");
+        var connection = PolyphenyDriver.OpenConnection("localhost:20590,pa:");
         connection.Open();
         await connection.Ping();
         connection.Close();
@@ -27,7 +27,7 @@ public class PolyphenyDriverTests
     [Test]
     public Task ShouldExecuteNonQuery()
     {
-        var connection = new PolyphenyConnection("localhost:20590,pa:");
+        var connection = PolyphenyDriver.OpenConnection("localhost:20590,pa:");
         connection.Open();
         var command = new PolyphenyCommand().
             WithConnection(connection).
@@ -54,7 +54,7 @@ public class PolyphenyDriverTests
     [Test]
     public Task ShouldExecuteNonQueryPrepared()
     {
-        var connection = new PolyphenyConnection("localhost:20590,pa:");
+        var connection = PolyphenyDriver.OpenConnection("localhost:20590,pa:");
         connection.Open();
         var command = new PolyphenyCommand().
             WithConnection(connection).
@@ -90,16 +90,16 @@ public class PolyphenyDriverTests
     [Test]
     public Task ShouldAbleToQueryData()
     {
-        var connection = new PolyphenyConnection("localhost:20590,pa:");
+        var connection = PolyphenyDriver.OpenConnection("localhost:20590,pa:");
         connection.Open();
 
         var command = new PolyphenyCommand().
             WithConnection(connection).
             WithCommandText("SELECT name FROM emps WHERE name = 'Bill'");
         var reader = command.ExecuteReader();
-        var resultSets = reader.ResultSets;
-        Assert.That(resultSets.Columns, Has.Length.EqualTo(1));
-        Assert.That(resultSets.Columns[0], Is.EqualTo("name"));
+        var columns = reader.Columns;
+        Assert.That(columns, Has.Length.EqualTo(1));
+        Assert.That(columns[0], Is.EqualTo("name"));
         
         connection.Close();
         return Task.CompletedTask;
@@ -108,7 +108,7 @@ public class PolyphenyDriverTests
     [Test]
     public Task ShouldAbleToQueryDataAfterInsert()
     {
-        var connection = new PolyphenyConnection("localhost:20590,pa:");
+        var connection = PolyphenyDriver.OpenConnection("localhost:20590,pa:");
         connection.Open();
         var command = new PolyphenyCommand().
             WithConnection(connection).
