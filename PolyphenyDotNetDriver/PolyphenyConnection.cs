@@ -39,7 +39,7 @@ namespace PolyphenyDotNetDriver
             }
         }
 
-        public override string Database => "PolyphenyDatabase";
+        public override string Database { get; }
 
         public override ConnectionState State
         {
@@ -47,25 +47,21 @@ namespace PolyphenyDotNetDriver
             {
                 return this._isConnected switch
                 {
-                    StatusDisconnected => ConnectionState.Closed,
-                    StatusServerConnected => ConnectionState.Connecting,
-                    StatusPolyphenyConnected => ConnectionState.Open,
+                    PolyphenyConnectionState.StatusDisconnected => ConnectionState.Closed,
+                    PolyphenyConnectionState.StatusServerConnected => ConnectionState.Connecting,
+                    PolyphenyConnectionState.StatusPolyphenyConnected => ConnectionState.Open,
                     _ => ConnectionState.Broken
                 };
             }
         }
 
-        public override string DataSource => "PolyphenyDataSource";
+        public override string DataSource { get; }
         public override string ServerVersion => TransportVersion;
 
-        private int _isConnected = StatusDisconnected;
+        private int _isConnected = PolyphenyConnectionState.StatusDisconnected;
         public int IsConnected => this._isConnected;
 
-        private const string TransportVersion = "plain-v1@polypheny.com\n";
-
-        private const int StatusDisconnected = 0;
-        private const int StatusServerConnected = 1;
-        private const int StatusPolyphenyConnected = 2;
+        private string TransportVersion { get; }
 
         private string _hostname;
         private int _port;
@@ -75,11 +71,15 @@ namespace PolyphenyDotNetDriver
         private TcpClient _client;
         private NetworkStream _stream;
 
-        public PolyphenyConnection(string connectionString)
+        public PolyphenyConnection(string connectionString, PolyphenyConfig config)
         {
+            Database = config.Database;
+            DataSource = config.DataSource;
+            TransportVersion = config.TransportVersion;
+            
             this._connectionString = connectionString;
             UpdateConnectionString();
-            Interlocked.Exchange(ref this._isConnected, StatusDisconnected);
+            Interlocked.Exchange(ref this._isConnected, PolyphenyConnectionState.StatusDisconnected);
         }
 
         public override void Close() => CloseAsync(CancellationToken.None).GetAwaiter().GetResult();
@@ -91,7 +91,7 @@ namespace PolyphenyDotNetDriver
                 DisconnectRequest = new DisconnectRequest()
             };
             await SendRecv(request);
-            Interlocked.Exchange(ref this._isConnected, StatusServerConnected);
+            Interlocked.Exchange(ref this._isConnected, PolyphenyConnectionState.StatusServerConnected);
 
             try
             {
@@ -105,7 +105,7 @@ namespace PolyphenyDotNetDriver
             finally
             {
                 this._client.Close();
-                Interlocked.Exchange(ref this._isConnected, StatusDisconnected);
+                Interlocked.Exchange(ref this._isConnected, PolyphenyConnectionState.StatusDisconnected);
             }
         }
         
@@ -115,7 +115,7 @@ namespace PolyphenyDotNetDriver
         {
             this._client = new TcpClient(this._hostname, this._port);
             this._stream = this._client.GetStream();
-            Interlocked.Exchange(ref this._isConnected, StatusServerConnected);
+            Interlocked.Exchange(ref this._isConnected, PolyphenyConnectionState.StatusServerConnected);
 
             var recvVersion = await this.RawReceive(1);
 
@@ -139,7 +139,7 @@ namespace PolyphenyDotNetDriver
             };
 
             await SendRecv(request);
-            Interlocked.Exchange(ref this._isConnected, StatusPolyphenyConnected);
+            Interlocked.Exchange(ref this._isConnected, PolyphenyConnectionState.StatusPolyphenyConnected);
         }
 
         public async Task Ping(CancellationToken cancellationToken = default)
@@ -147,9 +147,9 @@ namespace PolyphenyDotNetDriver
             var status = this._isConnected;
             switch (status)
             {
-                case StatusDisconnected:
+                case PolyphenyConnectionState.StatusDisconnected:
                     throw new Exception("Bad Connection");
-                case StatusServerConnected:
+                case PolyphenyConnectionState.StatusServerConnected:
                     throw new Exception("Ping: invalid connection to Polypheny server");
                 default:
                     {

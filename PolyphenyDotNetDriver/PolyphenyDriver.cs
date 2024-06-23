@@ -6,7 +6,8 @@ namespace PolyphenyDotNetDriver
     {        
         public static PolyphenyConnection OpenConnection(string connectionString)
         {
-            return new PolyphenyConnection(connectionString);
+            var config = new PolyphenyConfig();
+            return new PolyphenyConnection(connectionString, config);
         }
     }
 }
