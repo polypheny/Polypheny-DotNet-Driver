@@ -13,9 +13,14 @@ namespace PolyphenyDotNetDriver
 {
     public class PolyphenyConnection : DbConnection
     {
-        protected override DbTransaction BeginDbTransaction(IsolationLevel isolationLevel)
+        protected override PolyphenyTransaction BeginDbTransaction(IsolationLevel isolationLevel)
         {
-            throw new NotImplementedException();
+            return new PolyphenyTransaction(this, isolationLevel);
+        }
+
+        public new PolyphenyTransaction BeginTransaction(IsolationLevel isolationLevel = IsolationLevel.Unspecified)
+        {
+            return BeginDbTransaction(isolationLevel);
         }
 
         public override void ChangeDatabase(string databaseName)
@@ -135,6 +140,10 @@ namespace PolyphenyDotNetDriver
                     MinorApiVersion = Convert.ToInt32(Version.Minor),
                     Username = this._username,
                     Password = this._password,
+                    ConnectionProperties = new ConnectionProperties()
+                    {
+                        IsAutoCommit = false,
+                    }
                 }
             };
 

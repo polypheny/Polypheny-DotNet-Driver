@@ -27,8 +27,17 @@ namespace PolyphenyDotNetDriver
             this.ParameterValues = values;
             return this;
         }
-        
-        // TODO: with Polypheny Transaction
+
+        public PolyphenyCommand WithTransaction(PolyphenyTransaction transaction)
+        {
+            if (transaction.PolyphenyConnection != this.PolyphenyConnection)
+            {
+                throw new Exception("mismatch connection");
+            }
+            
+            DbTransaction = transaction;
+            return this;
+        }
         
         public override void Cancel()
         {

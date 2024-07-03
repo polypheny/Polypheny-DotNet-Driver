@@ -45,4 +45,9 @@ public class PolyphenyResultSets
         Interlocked.Increment(ref _index);
         return _index >= 0 && _index < _result.Length;
     }
+
+    public int RowCount()
+    {
+        return this._result.Length;
+    }
 }

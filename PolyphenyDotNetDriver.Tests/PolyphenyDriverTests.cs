@@ -194,15 +194,139 @@ public class PolyphenyDriverTests
         var result = command.ExecuteQueryMongo();
         Assert.That(result, Is.Not.Null);
 
-        foreach (var doc in result)
+        connection.Close();
+        return Task.CompletedTask;
+    }
+    
+    [Test]
+    public Task ShouldAbleToCommitTransaction()
+    {
+        var connection = PolyphenyDriver.OpenConnection("localhost:20590,pa:");
+        connection.Open();
+        var transaction = connection.BeginTransaction();
+        var command = new PolyphenyCommand().
+            WithConnection(connection).
+            WithTransaction(transaction).
+            WithCommandText("DROP TABLE IF EXISTS test");
+        command.ExecuteNonQuery();
+        
+        command = new PolyphenyCommand().
+            WithConnection(connection).
+            WithTransaction(transaction).
+            WithCommandText("CREATE TABLE test (id INT PRIMARY KEY, name VARCHAR(255))");
+        command.ExecuteNonQuery();
+        
+        // insert into test table
+        command = new PolyphenyCommand().
+            WithConnection(connection).
+            WithTransaction(transaction).
+            WithCommandText("INSERT INTO test (id, name) VALUES (?, ?)").
+            WithParameterValues(new object[] { 1, "testname" });
+        command.Prepare();
+        command.ExecuteNonQuery();
+        
+        // insert into test table
+        command = new PolyphenyCommand().
+            WithConnection(connection).
+            WithTransaction(transaction).
+            WithCommandText("INSERT INTO test (id, name) VALUES (?, ?)").
+            WithParameterValues(new object[] { 2, "testname2" });
+        command.Prepare();
+        command.ExecuteNonQuery();
+        
+        // COMMIT AND CHECK THE DATA
+        transaction.Commit();
+        
+        command = new PolyphenyCommand().
+            WithConnection(connection).
+            WithCommandText("SELECT * FROM test");
+        var reader = command.ExecuteReader();
+        var resultSets = reader.ResultSets;
+        Assert.That(resultSets.Columns, Has.Length.EqualTo(2));
+        Assert.Multiple(() =>
         {
-            foreach(var entry in doc)
-            {
-                Console.WriteLine(entry.Key + " : " + entry.Value);
-            }
-            Console.WriteLine("=====================================");
-        }
+            Assert.That(resultSets.Columns[0], Is.EqualTo("id"));
+            Assert.That(resultSets.Columns[1], Is.EqualTo("name"));
+        });
+        var id = reader.GetInt32(0);
+        var name = reader.GetString(1);
+        Assert.Multiple(() =>
+        {
+            Assert.That(id, Is.EqualTo(1));
+            Assert.That(name, Is.EqualTo("testname"));
+        });
+        
+        var next = reader.NextResult();
+        Assert.That(next, Is.True);
+        
+        id = reader.GetInt32(0);
+        name = reader.GetString(1);
+        Assert.Multiple(() =>
+        {
+            Assert.That(id, Is.EqualTo(2));
+            Assert.That(name, Is.EqualTo("testname2"));
+        });
+        next = reader.NextResult();
+        Assert.That(next, Is.False);
+        
+        command = new PolyphenyCommand().
+            WithConnection(connection).
+            WithCommandText("DROP TABLE IF EXISTS test");
+        var result = command.ExecuteNonQuery();
+        Assert.That(result, Is.EqualTo(1));      
+        
+        connection.Close();
+        return Task.CompletedTask;
+    }
 
+    [Test]
+    public Task ShouldAbleToRollbackTransaction()
+    {
+        var connection = PolyphenyDriver.OpenConnection("localhost:20590,pa:");
+        connection.Open();
+        var command = new PolyphenyCommand().
+            WithConnection(connection).
+            WithCommandText("DROP TABLE IF EXISTS test");
+        command.ExecuteNonQuery();
+        
+        command = new PolyphenyCommand().
+            WithConnection(connection).
+            WithCommandText("CREATE TABLE test (id INT PRIMARY KEY, name VARCHAR(255))");
+        command.ExecuteNonQuery();
+        
+        var transaction = connection.BeginTransaction();
+        // insert into test table
+        command = new PolyphenyCommand().
+            WithConnection(connection).
+            WithTransaction(transaction).
+            WithCommandText("INSERT INTO test (id, name) VALUES (?, ?)").
+            WithParameterValues(new object[] { 1, "testname" });
+        command.Prepare();
+        command.ExecuteNonQuery();
+        
+        // insert into test table
+        command = new PolyphenyCommand().
+            WithConnection(connection).
+            WithTransaction(transaction).
+            WithCommandText("INSERT INTO test (id, name) VALUES (?, ?)").
+            WithParameterValues(new object[] { 2, "testname2" });
+        command.Prepare();
+        command.ExecuteNonQuery();
+        
+        // ROLLBACK AND CHECK THE DATA
+        transaction.Rollback();
+        
+        command = new PolyphenyCommand().
+            WithConnection(connection).
+            WithCommandText("SELECT * FROM test");
+        var reader = command.ExecuteReader();
+        var resultSets = reader.ResultSets;
+        Assert.Multiple(() =>
+        {
+            Assert.That(resultSets.Columns, Has.Length.EqualTo(2));
+            Assert.That(resultSets.RowCount(), Is.EqualTo(0));
+        });
+        
         connection.Close();
         return Task.CompletedTask;
     }
