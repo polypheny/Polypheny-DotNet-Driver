@@ -17,10 +17,5 @@ namespace PolyphenyDotNetDriver
         {
             return new PolyphenyResult(-1, -1);
         }
-        
-        public bool IsEmpty()
-        {
-            return this.LastInsertedId == -1 && this.RowsAffected == -1;
-        }
     }
 }

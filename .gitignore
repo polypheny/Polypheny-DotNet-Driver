@@ -484,4 +484,4 @@ $RECYCLE.BIN/
 *.swp
 
 # Additional
-*/coverage-report/*
+*/coveragereport/*

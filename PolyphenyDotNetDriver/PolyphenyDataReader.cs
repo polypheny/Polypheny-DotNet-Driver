@@ -14,7 +14,7 @@ namespace PolyphenyDotNetDriver
     {
         private bool _isOpen = true;
         private readonly PolyphenyCommand _cmd;
-        public PolyphenyResultSets ResultSets { get; private set; } = null;
+        public PolyphenyResultSets ResultSets { get; set; } = null;
         public string[] Columns => this.ResultSets?.Columns;
 
         public PolyphenyDataReader(PolyphenyCommand cmd)
@@ -22,22 +22,23 @@ namespace PolyphenyDotNetDriver
             this._cmd = cmd;
         }
         
-        public override bool GetBoolean(int ordinal)
+        private T GetCast<T>(int ordinal)
         {
             var val = GetValue(ordinal);
-            if (val is bool b)
-                return b;
+            if (val is T t)
+                return t;
 
-            throw new Exception("Wrong type accessing");
+            throw new Exception($"Wrong type accessing: expected {typeof(T)}, got {val?.GetType()}");
+        }
+        
+        public override bool GetBoolean(int ordinal)
+        {
+            return GetCast<bool>(ordinal);
         }
 
         public override byte GetByte(int ordinal)
         {
-            var val = GetValue(ordinal);
-            if (val is byte b)
-                return b;
-
-            throw new Exception("Wrong type accessing");
+            return GetCast<byte>(ordinal);
         }
 
         public override long GetBytes(int ordinal, long fieldOffset, byte[] buffer, int bufferoffset, int length)
@@ -102,79 +103,47 @@ namespace PolyphenyDotNetDriver
 
         public override DateTime GetDateTime(int ordinal)
         {
-            var val = GetValue(ordinal);
-            if (val is DateTime dateTime)
-                return dateTime;
-
-            throw new Exception("Wrong type accessing");
+            return GetCast<DateTime>(ordinal);
         }
 
         public override decimal GetDecimal(int ordinal)
         {
-            var val = GetValue(ordinal);
-            if (val is decimal d)
-                return d;
-
-            throw new Exception("Wrong type accessing");
+            return GetCast<decimal>(ordinal);
         }
 
         public override double GetDouble(int ordinal)
         {
-            var val = GetValue(ordinal);
-            if (val is double d)
-                return d;
-
-            throw new Exception("Wrong type accessing");
+            return GetCast<double>(ordinal);
         }
 
         public override Type GetFieldType(int ordinal)
         {
             return GetValue(ordinal).GetType();
         }
-
+        
         public override float GetFloat(int ordinal)
         {
-            var val = GetValue(ordinal);
-            if (val is float f)
-                return f;
-
-            throw new Exception("Wrong type accessing");
+            return GetCast<float>(ordinal);
         }
 
         public override Guid GetGuid(int ordinal)
         {
-            var val = GetValue(ordinal);
-            if (val is Guid g)
-                return g;
-
-            throw new Exception("Wrong type accessing");
+            return GetCast<Guid>(ordinal);
         }
 
         public override short GetInt16(int ordinal)
         {
-            var val = GetValue(ordinal);
-            if (val is short s)
-                return s;
-
-            throw new Exception("Wrong type accessing");
+            return GetCast<short>(ordinal);
         }
 
         public override int GetInt32(int ordinal)
         {
-            var val = GetValue(ordinal);
-            if (val is int i)
-                return i;
-
-            throw new Exception("Wrong type accessing");
+            return GetCast<int>(ordinal);
         }
 
         public override long GetInt64(int ordinal)
         {
-            var val = GetValue(ordinal);
-            if (val is long l)
-                return l;
-
-            throw new Exception("Wrong type accessing");
+            return GetCast<long>(ordinal);
         }
 
         public override string GetName(int ordinal)
