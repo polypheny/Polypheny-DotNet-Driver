@@ -266,7 +266,6 @@ public class PolyphenyDataReaderTests
     }
     
     [Test]
-    // test GetName after IsClosed
     public void PolyphenyDataReader_GetName_WithClosedReader_ThrowsException()
     {
         var data = new PolyphenyResultSets(["col1", "col2"], new object[][] { new object[] { "test1", "test2" } });
@@ -296,7 +295,6 @@ public class PolyphenyDataReaderTests
         });
     }
     
-    // test GetInt64, GetInt32, GetInt16, GetInt8, GetDecimal, GetFloat, GetDouble, GetBoolean, GetDateTime, GetGuid, GetByte, GetBytes, GetChar, GetChars, GetStream, GetTextReader, GetXmlReader, GetTimeSpan, GetDateTimeOffset
     [Test]
     public void PolyphenyDataReader_GetInt64_WithValidOrdinal_ReturnInt64()
     {
@@ -364,7 +362,6 @@ public class PolyphenyDataReaderTests
         Assert.That(reader.GetFloat(0), Is.EqualTo(1.0f));
     }
     
-    // test getdouble
     [Test]
     public void PolyphenyDataReader_GetDouble_WithValidOrdinal_ReturnDouble()
     {
@@ -375,8 +372,7 @@ public class PolyphenyDataReaderTests
         
         Assert.That(reader.GetDouble(0), Is.EqualTo(1.0));
     }
-    
-    // test getdecimal
+
     [Test]
     public void PolyphenyDataReader_GetDecimal_WithValidOrdinal_ReturnDecimal()
     {
@@ -389,7 +385,6 @@ public class PolyphenyDataReaderTests
     }
     
     [Test]
-    // get datetime
     public void PolyphenyDataReader_GetDateTime_WithValidOrdinal_ReturnDateTime()
     {
         var dateTime = DateTime.Now;
@@ -401,7 +396,6 @@ public class PolyphenyDataReaderTests
         Assert.That(reader.GetDateTime(0), Is.EqualTo(dateTime));
     }
     
-    // test getchars
     [Test]
     public void PolyphenyDataReader_GetChars_WithValidOrdinal_ReturnChars()
     {
@@ -415,8 +409,96 @@ public class PolyphenyDataReaderTests
         
         Assert.That(buffer, Is.EqualTo(new char[] { 't', 'e', 's', 't' }));
     }
+
+    [Test]
+    public void PolyphenyDataReader_GetChars_WithOutOfRangeIndex_ThrowsException()
+    {
+        var data = new PolyphenyResultSets(["col1", "col2"], new object[][] { new object[] { "test", "test2" } });
+
+        var reader = new PolyphenyDataReader(null);
+        reader.ResultSets = data;
+        
+        Assert.Throws<IndexOutOfRangeException>(
+            () =>
+            {
+                var buffer = new char[4];
+                var result = reader.GetChars(3, 0, buffer, 0, 4);
+            });
+    }
     
-    // test getchar
+    [Test]
+    public void PolyphenyDataReader_GetChars_WithNullBuffer_ThrowsException()
+    {
+        var data = new PolyphenyResultSets(["col1", "col2"], new object[][] { new object[] { "test", "test2" } });
+
+        var reader = new PolyphenyDataReader(null);
+        reader.ResultSets = data;
+        
+        var result = reader.GetChars(0, 0, null, 0, 4);
+        Assert.That(result, Is.EqualTo(4));
+    }
+
+    [Test]
+    public void PolyphenyDataReader_GetChars_WithInvalidIndexOffsetBuffer_ThrowsException()
+    {
+        var data = new PolyphenyResultSets(["col1", "col2"], new object[][] { new object[] { "test", "test2" } });
+
+        var reader = new PolyphenyDataReader(null);
+        reader.ResultSets = data;
+        
+        Assert.Throws<IndexOutOfRangeException>(
+            () =>
+            {
+                var buffer = new char[4];
+                var result = reader.GetChars(3, 0, buffer, -1, 4);
+            });
+    }
+    
+    [Test]
+    public void PolyphenyDataReader_GetChars_WithTooLittleBuffer_ThrowsException()
+    {
+        var data = new PolyphenyResultSets(["col1", "col2"], new object[][] { new object[] { "test", "test2" } });
+
+        var reader = new PolyphenyDataReader(null);
+        reader.ResultSets = data;
+        
+        Assert.Throws<ArgumentException>(
+            () =>
+            {
+                var buffer = new char[4];
+                var result = reader.GetChars(0, 0, buffer, 2, 4);
+            });
+    }
+    
+    [Test]
+    public void PolyphenyDataReader_GetChars_WithOutOfRangeFieldOffset_ThrowsException()
+    {
+        var data = new PolyphenyResultSets(["col1", "col2"], new object[][] { new object[] { "test", "test2" } });
+
+        var reader = new PolyphenyDataReader(null);
+        reader.ResultSets = data;
+        
+        Assert.Throws<IndexOutOfRangeException>(
+            () =>
+            {
+                var buffer = new char[4];
+                var result = reader.GetChars(0, -1, buffer, 0, 4);
+            });
+    }
+    
+    [Test]
+    public void PolyphenyDataReader_GetChars_WithMoreLength_LengthIsCut()
+    {
+        var data = new PolyphenyResultSets(["col1", "col2"], new object[][] { new object[] { "test", "test2" } });
+
+        var reader = new PolyphenyDataReader(null);
+        reader.ResultSets = data;
+        
+        var buffer = new char[10];
+        var result = reader.GetChars(0, 0, buffer, 0, 10);
+        Assert.That(result, Is.EqualTo(4));
+    }
+    
     [Test]
     public void PolyphenyDataReader_GetChar_WithValidOrdinal_ReturnChar()
     {
@@ -467,6 +549,86 @@ public class PolyphenyDataReaderTests
             var buffer = new byte[3];
             reader.GetBytes(0, 4, buffer, 0, 3);
         });
+    }
+    
+    [Test]
+    public void PolyphenyDataReader_GetBytes_WithNonBytes_ThrowsException()
+    {
+        var data = new PolyphenyResultSets(["col1", "col2"], new object[][] { new object[] { "test", new byte[] { 4, 5, 6 } } });
+
+        var reader = new PolyphenyDataReader(null);
+        reader.ResultSets = data;
+        
+        Assert.Throws<Exception>(() =>
+        {
+            var buffer = new byte[3];
+            reader.GetBytes(0, 4, buffer, 0, 3);
+        });
+    }
+    
+    [Test]
+    public void PolyphenyDataReader_GetBytes_WithInvalidIndexBufferOffset_ThrowsException()
+    {
+        var data = new PolyphenyResultSets(["col1", "col2"], new object[][] { new object[] { new byte[] { 1, 2, 3 }, new byte[] { 4, 5, 6 } } });
+
+        var reader = new PolyphenyDataReader(null);
+        reader.ResultSets = data;
+
+        Assert.Throws<IndexOutOfRangeException>(
+            () =>
+            {
+                var buffer = new byte[3];
+                reader.GetBytes(0, 0, buffer, -1, 3);
+            }
+        );
+    }
+    
+    [Test]
+    public void PolyphenyDataReader_GetBytes_WithTooSmallBuffer_ThrowsException()
+    {
+        var data = new PolyphenyResultSets(["col1", "col2"], new object[][] { new object[] { new byte[] { 1, 2, 3 }, new byte[] { 4, 5, 6 } } });
+
+        var reader = new PolyphenyDataReader(null);
+        reader.ResultSets = data;
+
+        Assert.Throws<ArgumentException>(
+            () =>
+            {
+                var buffer = new byte[1];
+                reader.GetBytes(0, 0, buffer, 0, 3);
+            }
+        );
+    }
+    
+    [Test]
+    public void PolyphenyDataReader_GetBytes_WithInvalidFieldOffset_ThrowsException()
+    {
+        var data = new PolyphenyResultSets(["col1", "col2"], new object[][] { new object[] { new byte[] { 1, 2, 3 }, new byte[] { 4, 5, 6 } } });
+
+        var reader = new PolyphenyDataReader(null);
+        reader.ResultSets = data;
+
+        Assert.Throws<IndexOutOfRangeException>(
+            () =>
+            {
+                var buffer = new byte[3];
+                reader.GetBytes(0, -1, buffer, 0, 3);
+            }
+        );
+    }
+    
+    [Test]
+    public void PolyphenyDataReader_GetBytes_WithTooShortLength_LengthWillBeCut()
+    {
+        var data = new PolyphenyResultSets(["col1", "col2"], new object[][] { new object[] { new byte[] { 1 }, new byte[] { 4 } } });
+
+        var reader = new PolyphenyDataReader(null);
+        reader.ResultSets = data;
+
+        var buffer = new byte[3];
+        var length = reader.GetBytes(0, 0, buffer, 0, 3);
+        
+        Assert.That(length, Is.EqualTo(1));
     }
     
     [Test]
