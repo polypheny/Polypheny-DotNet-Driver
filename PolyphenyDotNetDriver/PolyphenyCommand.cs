@@ -5,14 +5,25 @@ using System.Data.Common;
 using System.Threading;
 using System.Threading.Tasks;
 using Polypheny.Prism;
+using PolyphenyDotNetDriver.Interface;
 
 namespace PolyphenyDotNetDriver
 {
-    public class PolyphenyCommand : DbCommand
+    public class PolyphenyCommand : DbCommand, IPolyphenyCommand
     {
-        public PolyphenyCommand WithConnection(PolyphenyConnection connection)
+        public PolyphenyCommand WithConnection(IPolyphenyConnection connection)
         {
-            this.PolyphenyConnection = connection;
+            this.connection = connection;
+
+            if (connection is DbConnection c)
+            {
+                this.DbConnection = c;
+            }
+            else
+            {
+                this.DbConnection = null;
+            }
+            
             return this;
         }
         
@@ -30,7 +41,7 @@ namespace PolyphenyDotNetDriver
 
         public PolyphenyCommand WithTransaction(PolyphenyTransaction transaction)
         {
-            if (transaction.PolyphenyConnection != this.PolyphenyConnection)
+            if (transaction.PolyphenyConnection != this.connection)
             {
                 throw new Exception("mismatch connection");
             }
@@ -48,7 +59,7 @@ namespace PolyphenyDotNetDriver
         
         public override async Task<int> ExecuteNonQueryAsync(CancellationToken cancellationToken)
         {
-            if (PolyphenyConnection == null)
+            if (connection == null)
             {
                 throw new InvalidOperationException("Connection property must be non-null");
             }
@@ -74,10 +85,10 @@ namespace PolyphenyDotNetDriver
                 }
             };
 
-            var response = await this.PolyphenyConnection.SendRecv(request);
+            var response = await this.connection.SendRecv(request);
             var tmpId = response?.StatementResponse?.StatementId;
 
-            var newResponse = await this.PolyphenyConnection.Receive();
+            var newResponse = await this.connection.Receive();
             if (newResponse?.StatementResponse?.StatementId != tmpId)
             {
                 throw new Exception("StatementId mismatch");
@@ -111,7 +122,7 @@ namespace PolyphenyDotNetDriver
                 }
             };
 
-            var response = await this.PolyphenyConnection.SendRecv(request);
+            var response = await this.connection.SendRecv(request);
             var statementResult = response?.StatementResult;
             var rowAffected = statementResult?.Scalar;
             
@@ -132,7 +143,7 @@ namespace PolyphenyDotNetDriver
 
         public override async Task PrepareAsync(CancellationToken cancellationToken)
         {
-            if (PolyphenyConnection == null)
+            if (connection == null)
             {
                 throw new InvalidOperationException("Connection property must be non-null");
             }
@@ -146,7 +157,7 @@ namespace PolyphenyDotNetDriver
                 }
             };
             
-            var response = await this.PolyphenyConnection.SendRecv(request);
+            var response = await this.connection.SendRecv(request);
             var parameterMetas = response?.PreparedStatementSignature?.ParameterMetas;
             var parameterCollections = PolyphenyParameterCollection.FromParameterMetas(parameterMetas);
             this._parameterCollection = parameterCollections;
@@ -154,31 +165,27 @@ namespace PolyphenyDotNetDriver
             this._isPrepared = true;
         }
 
+        public Task<Response> SendRecv(Request m)
+        {
+            return this.connection.SendRecv(m);
+        }
+
+        public Task<Response> Receive(int lengthSize)
+        {
+            return this.connection.Receive(lengthSize);
+        }
+
         public override string CommandText { get; set; } = string.Empty;
         public override int CommandTimeout { get; set; } = 30;
         public override CommandType CommandType { get; set; } = CommandType.Text;
         public override UpdateRowSource UpdatedRowSource { get; set; } = UpdateRowSource.Both;
 
-        public PolyphenyConnection PolyphenyConnection { get; private set; }
-        protected override DbConnection DbConnection
-        {
-            get => this.PolyphenyConnection;
-            set
-            {
-                if (value is PolyphenyConnection polyphenyConnection)
-                {
-                    this.PolyphenyConnection = polyphenyConnection;
-                }
-                else
-                {
-                    throw new InvalidOperationException("Connection must be a PolyphenyConnection");
-                }
-            }
-        }
-
+        private IPolyphenyConnection connection { get; set; }
+        
         private bool _isPrepared = false;
         private int? _statementId = null;
         private PolyphenyParameterCollection _parameterCollection;
+        protected override DbConnection DbConnection { get; set; }
         protected override DbParameterCollection DbParameterCollection => this._parameterCollection;
         protected override DbTransaction DbTransaction { get; set; }
         public override bool DesignTimeVisible { get; set; }
@@ -208,7 +215,7 @@ namespace PolyphenyDotNetDriver
         public Dictionary<object, object>[] ExecuteQueryMongo() => ExecuteQueryMongoAsync(CancellationToken.None).GetAwaiter().GetResult();
         private async Task<Dictionary<object, object>[]> ExecuteQueryMongoAsync(CancellationToken cancellationToken)
         {
-            if (PolyphenyConnection == null)
+            if (connection == null)
             {
                 throw new InvalidOperationException("Connection property must be non-null");
             }
@@ -222,10 +229,10 @@ namespace PolyphenyDotNetDriver
                 }
             };
             
-            var response = await this.PolyphenyConnection.SendRecv(request);
+            var response = await this.connection.SendRecv(request);
             var tmpId = response?.StatementResponse?.StatementId;
             
-            var newResponse = await this.PolyphenyConnection.Receive();
+            var newResponse = await this.connection.Receive();
             if (newResponse?.StatementResponse?.StatementId != tmpId)
             {
                 throw new Exception("StatementId mismatch");

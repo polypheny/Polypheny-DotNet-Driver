@@ -7,11 +7,12 @@ using System.Threading;
 using System.Threading.Tasks;
 using Google.Protobuf;
 using Polypheny.Prism;
+using PolyphenyDotNetDriver.Interface;
 using Version = Polypheny.Prism.Version;
 
 namespace PolyphenyDotNetDriver
 {
-    public class PolyphenyConnection : DbConnection
+    public class PolyphenyConnection : DbConnection, IPolyphenyConnection
     {
         protected override PolyphenyTransaction BeginDbTransaction(IsolationLevel isolationLevel)
         {

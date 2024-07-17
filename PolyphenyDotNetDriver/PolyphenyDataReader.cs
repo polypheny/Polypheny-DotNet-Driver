@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Polypheny.Prism;
+using PolyphenyDotNetDriver.Interface;
 using Type = System.Type;
 
 namespace PolyphenyDotNetDriver
@@ -13,11 +14,11 @@ namespace PolyphenyDotNetDriver
     public class PolyphenyDataReader: DbDataReader
     {
         private bool _isOpen = true;
-        private readonly PolyphenyCommand _cmd;
+        private readonly IPolyphenyCommand _cmd;
         public PolyphenyResultSets ResultSets { get; set; } = null;
         public string[] Columns => this.ResultSets?.Columns;
 
-        public PolyphenyDataReader(PolyphenyCommand cmd)
+        public PolyphenyDataReader(IPolyphenyCommand cmd)
         {
             this._cmd = cmd;
         }
@@ -258,10 +259,10 @@ namespace PolyphenyDotNetDriver
                 }
             };
 
-            var response = await this._cmd.PolyphenyConnection.SendRecv(request);
+            var response = await this._cmd.SendRecv(request);
             var tmpId = response?.StatementResponse?.StatementId;
 
-            var newResponse = await this._cmd.PolyphenyConnection.Receive(8);
+            var newResponse = await this._cmd.Receive(8);
             var statementId = newResponse?.StatementResponse?.StatementId;
             if (statementId != tmpId)
             {

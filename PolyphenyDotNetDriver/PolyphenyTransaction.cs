@@ -3,15 +3,25 @@ using System.Data.Common;
 using System.Threading;
 using System.Threading.Tasks;
 using Polypheny.Prism;
+using PolyphenyDotNetDriver.Interface;
 
 namespace PolyphenyDotNetDriver;
 
 public class PolyphenyTransaction: DbTransaction
 {
-    public PolyphenyTransaction(PolyphenyConnection connection, IsolationLevel isolationLevel)
+    public PolyphenyTransaction(IPolyphenyConnection connection, IsolationLevel isolationLevel)
     {
         PolyphenyConnection = connection;
         IsolationLevel = isolationLevel;
+
+        if (connection is DbConnection c)
+        {
+            this.DbConnection = c;
+        }
+        else
+        {
+            this.DbConnection = null;
+        }
     }
 
     public override void Commit() => CommitAsync(CancellationToken.None).GetAwaiter().GetResult();
@@ -38,8 +48,8 @@ public class PolyphenyTransaction: DbTransaction
         await PolyphenyConnection.SendRecv(request);
     }
 
-    public readonly PolyphenyConnection PolyphenyConnection;
-    protected override DbConnection DbConnection => PolyphenyConnection;
+    public readonly IPolyphenyConnection PolyphenyConnection;
     // TODO: use isolation level
+    protected override DbConnection DbConnection { get; }
     public override IsolationLevel IsolationLevel { get; }
 }

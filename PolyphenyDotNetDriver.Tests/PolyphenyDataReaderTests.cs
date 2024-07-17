@@ -1,10 +1,17 @@
+using Moq;
+using Polypheny.Prism;
+using PolyphenyDotNetDriver.Interface;
+
 namespace PolyphenyDotNetDriver.Tests;
 
 public class PolyphenyDataReaderTests
 {
+    private Mock<IPolyphenyCommand> _mockCommand;
+
     [SetUp]
-    public void Setup()
+    public void SetUp()
     {
+        _mockCommand = new Mock<IPolyphenyCommand>();
     }
     
     [Test]
@@ -667,6 +674,143 @@ public class PolyphenyDataReaderTests
         Assert.Throws<Exception>(() =>
         {
             var value = reader.GetInt32(0);
+        });
+    }
+
+    [Test]
+    public void PolyphenyDataReader_Read_WithMismatchStatementId_ThrowsException()
+    {
+        var response = new Response()
+        {
+            StatementResponse = new StatementResponse()
+            {
+                StatementId = 1,
+            }
+        };
+        _mockCommand.Setup(x => x.SendRecv(It.IsAny<Request>())).ReturnsAsync(response);
+        _mockCommand.Setup(x => x.CommandText).Returns("");
+
+        var response2 = new Response()
+        {
+            StatementResponse = new StatementResponse()
+            {
+                StatementId = 2,
+            }
+        };
+        _mockCommand.Setup(x => x.Receive(8)).ReturnsAsync(response2);
+
+        var reader = new PolyphenyDataReader(_mockCommand.Object);
+
+        Assert.Throws<Exception>( () =>
+        {
+            reader.Read();
+        });
+    }
+    
+    [Test]
+    public void PolyphenyDataReader_Read_WithNullResult_ThrowsException()
+    {
+        var response = new Response()
+        {
+            StatementResponse = new StatementResponse()
+            {
+                StatementId = 1,
+            }
+        };
+        _mockCommand.Setup(x => x.SendRecv(It.IsAny<Request>())).ReturnsAsync(response);
+        _mockCommand.Setup(x => x.CommandText).Returns("");
+
+        var response2 = new Response()
+        {
+            StatementResponse = new StatementResponse()
+            {
+                StatementId = 1,
+                Result = null,
+            }
+        };
+        
+        _mockCommand.Setup(x => x.Receive(8)).ReturnsAsync(response2);
+
+        var reader = new PolyphenyDataReader(_mockCommand.Object);
+
+        Assert.Throws<Exception>( () =>
+        {
+            reader.Read();
+        });
+    }
+    
+    [Test]
+    public void PolyphenyDataReader_Read_WithNullFrame_ThrowsException()
+    {
+        var response = new Response()
+        {
+            StatementResponse = new StatementResponse()
+            {
+                StatementId = 1,
+            }
+        };
+        _mockCommand.Setup(x => x.SendRecv(It.IsAny<Request>())).ReturnsAsync(response);
+        _mockCommand.Setup(x => x.CommandText).Returns("");
+
+        var response2 = new Response()
+        {
+            StatementResponse = new StatementResponse()
+            {
+                StatementId = 1,
+                Result = new StatementResult()
+                {
+                    Frame = null,
+                },
+            }
+        };
+        
+        
+        _mockCommand.Setup(x => x.Receive(8)).ReturnsAsync(response2);
+
+        var reader = new PolyphenyDataReader(_mockCommand.Object);
+
+        Assert.Throws<Exception>( () =>
+        {
+            reader.Read();
+        });
+    }
+    
+    [Test]
+    public void PolyphenyDataReader_Read_WithNullRelationalFrame_ThrowsException()
+    {
+        var response = new Response()
+        {
+            StatementResponse = new StatementResponse()
+            {
+                StatementId = 1,
+            }
+        };
+        _mockCommand.Setup(x => x.SendRecv(It.IsAny<Request>())).ReturnsAsync(response);
+        _mockCommand.Setup(x => x.CommandText).Returns("");
+
+        var response2 = new Response()
+        {
+            StatementResponse = new StatementResponse()
+            {
+                StatementId = 1,
+                Result = new StatementResult()
+                {
+                    Frame = new Frame()
+                    {
+                        RelationalFrame = null,
+                    },
+                },
+            }
+        };
+        
+        
+        _mockCommand.Setup(x => x.Receive(8)).ReturnsAsync(response2);
+
+        var reader = new PolyphenyDataReader(_mockCommand.Object);
+
+        Assert.Throws<Exception>( () =>
+        {
+            reader.Read();
         });
     }
 }
