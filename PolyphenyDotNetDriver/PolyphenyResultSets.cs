@@ -16,7 +16,7 @@ public class PolyphenyResultSets
     {
         this.Columns = columns;
         this._result = result;
-        this._index = 0;
+        this._index = -1;
     }
 
     public bool Finish()

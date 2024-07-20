@@ -15,6 +15,7 @@ public class PolyphenyResultSetsTests
         var results = new[] { new object[] { 1, "test" } };
         
         var resultSet = new PolyphenyResultSets(columns, results);
+        resultSet.Next();
 
         var current = resultSet.GetCurrent();
         
@@ -32,6 +33,7 @@ public class PolyphenyResultSetsTests
         var results = new[] { new object[] { 1, "test" } };
         
         var resultSet = new PolyphenyResultSets(columns, results);
+        resultSet.Next();
 
         Assert.Throws<IndexOutOfRangeException>(() =>
         {
@@ -47,10 +49,10 @@ public class PolyphenyResultSetsTests
         var results = new[] { new object[] { 1, "test" }, new object[] { 2, "test2" } };
         
         var resultSet = new PolyphenyResultSets(columns, results);
-
         resultSet.Next();
-        var current = resultSet.GetCurrent();
+        resultSet.Next();
         
+        var current = resultSet.GetCurrent();
         Assert.Multiple(() =>
         {
             Assert.That(current[0], Is.EqualTo(2));
@@ -65,8 +67,9 @@ public class PolyphenyResultSetsTests
         var results = new[] { new object[] { 1, "test" }, new object[] { 2, "test2" } };
         
         var resultSet = new PolyphenyResultSets(columns, results);
-
         resultSet.Next();
+        resultSet.Next();
+        
         var next2 = resultSet.Next();
         Assert.That(next2, Is.False);
     }
@@ -78,6 +81,7 @@ public class PolyphenyResultSetsTests
         var results = new[] { new object[] { 1, "test" } };
         
         var resultSet = new PolyphenyResultSets(columns, results);
+        resultSet.Next();
 
         Assert.Throws<IndexOutOfRangeException>(() =>
         {
@@ -92,6 +96,7 @@ public class PolyphenyResultSetsTests
         var results = new[] { new object[] { 1, "test" } };
         
         var resultSet = new PolyphenyResultSets(columns, results);
+        resultSet.Next();
 
         Assert.Throws<IndexOutOfRangeException>(() =>
         {
@@ -106,6 +111,7 @@ public class PolyphenyResultSetsTests
         var results = new[] { new object[] { 1, "test" } };
         
         var resultSet = new PolyphenyResultSets(columns, results);
+        resultSet.Next();
         resultSet.Next();
 
         Assert.Throws<IndexOutOfRangeException>(() =>

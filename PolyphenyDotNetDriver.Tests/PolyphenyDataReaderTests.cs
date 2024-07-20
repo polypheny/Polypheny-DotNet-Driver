@@ -34,6 +34,7 @@ public class PolyphenyDataReaderTests
         
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.Multiple(() =>
         {
@@ -50,6 +51,7 @@ public class PolyphenyDataReaderTests
         
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader.Read(), Is.False);
     }
@@ -61,6 +63,7 @@ public class PolyphenyDataReaderTests
         
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader.Read(), Is.True);
     }
@@ -72,6 +75,7 @@ public class PolyphenyDataReaderTests
         
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         reader.Read();
         
@@ -85,6 +89,7 @@ public class PolyphenyDataReaderTests
         
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader.GetValue(0), Is.EqualTo("test"));
     }
@@ -96,6 +101,7 @@ public class PolyphenyDataReaderTests
         
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader.GetFieldType(0), Is.EqualTo(typeof(string)));
     }
@@ -107,6 +113,7 @@ public class PolyphenyDataReaderTests
         
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader.GetOrdinal("test"), Is.EqualTo(0));
     }
@@ -118,6 +125,7 @@ public class PolyphenyDataReaderTests
         
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader.GetName(0), Is.EqualTo("test"));
     }
@@ -129,6 +137,7 @@ public class PolyphenyDataReaderTests
         
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         reader.Close();
         
@@ -142,6 +151,7 @@ public class PolyphenyDataReaderTests
         
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         var enumerator = reader.GetEnumerator();
         using var unknown = enumerator as IDisposable;
@@ -162,6 +172,7 @@ public class PolyphenyDataReaderTests
         
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader.Depth, Is.EqualTo(0));
     }
@@ -173,6 +184,7 @@ public class PolyphenyDataReaderTests
         
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader.RecordsAffected, Is.EqualTo(0));
     }
@@ -184,6 +196,7 @@ public class PolyphenyDataReaderTests
         
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader[0], Is.EqualTo("test"));
     }
@@ -195,6 +208,7 @@ public class PolyphenyDataReaderTests
         
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader["col1"], Is.EqualTo("test"));
     }
@@ -206,6 +220,7 @@ public class PolyphenyDataReaderTests
         
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader.IsDBNull(0), Is.False);
     }
@@ -228,6 +243,7 @@ public class PolyphenyDataReaderTests
         
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader.GetOrdinal("col1"), Is.EqualTo(0));
     }
@@ -239,6 +255,7 @@ public class PolyphenyDataReaderTests
         
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         var values = new object[2];
         reader.GetValues(values);
@@ -257,6 +274,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader.GetString(0), Is.EqualTo("test1"));
     }
@@ -279,6 +297,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         reader.Close();
         
@@ -295,6 +314,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.Throws<IndexOutOfRangeException>(() =>
         {
@@ -309,6 +329,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader.GetInt64(0), Is.EqualTo(1L));
     }
@@ -320,6 +341,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader.GetInt32(0), Is.EqualTo(1));
     }
@@ -331,6 +353,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader.GetInt16(0), Is.EqualTo((short)1));
     }
@@ -343,6 +366,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader.GetGuid(0), Is.EqualTo(guid));
     }
@@ -354,6 +378,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader.GetByte(0), Is.EqualTo((byte)1));
     }
@@ -365,6 +390,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader.GetFloat(0), Is.EqualTo(1.0f));
     }
@@ -376,6 +402,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader.GetDouble(0), Is.EqualTo(1.0));
     }
@@ -387,6 +414,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader.GetDecimal(0), Is.EqualTo(1.0m));
     }
@@ -399,6 +427,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader.GetDateTime(0), Is.EqualTo(dateTime));
     }
@@ -410,6 +439,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         var buffer = new char[4];
         reader.GetChars(0, 0, buffer, 0, 4);
@@ -424,6 +454,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.Throws<IndexOutOfRangeException>(
             () =>
@@ -440,6 +471,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         var result = reader.GetChars(0, 0, null, 0, 4);
         Assert.That(result, Is.EqualTo(4));
@@ -452,6 +484,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.Throws<IndexOutOfRangeException>(
             () =>
@@ -468,6 +501,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.Throws<ArgumentException>(
             () =>
@@ -484,6 +518,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.Throws<IndexOutOfRangeException>(
             () =>
@@ -500,6 +535,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         var buffer = new char[10];
         var result = reader.GetChars(0, 0, buffer, 0, 10);
@@ -513,6 +549,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader.GetChar(0), Is.EqualTo('t'));
     }
@@ -524,6 +561,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         var buffer = new byte[3];
         reader.GetBytes(0, 0, buffer, 0, 3);
@@ -538,6 +576,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         var result = reader.GetBytes(0, 0, null, 0, 3);
         Assert.That(result, Is.EqualTo(3));
@@ -550,6 +589,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.Throws<IndexOutOfRangeException>(() =>
         {
@@ -565,6 +605,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.Throws<Exception>(() =>
         {
@@ -580,6 +621,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
 
         Assert.Throws<IndexOutOfRangeException>(
             () =>
@@ -597,6 +639,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
 
         Assert.Throws<ArgumentException>(
             () =>
@@ -614,6 +657,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
 
         Assert.Throws<IndexOutOfRangeException>(
             () =>
@@ -631,6 +675,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
 
         var buffer = new byte[3];
         var length = reader.GetBytes(0, 0, buffer, 0, 3);
@@ -645,6 +690,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.That(reader.GetBoolean(0), Is.True);
     }
@@ -657,6 +703,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
 
         var columns = reader.Columns;
         
@@ -670,6 +717,7 @@ public class PolyphenyDataReaderTests
 
         var reader = new PolyphenyDataReader(null);
         reader.ResultSets = data;
+        reader.Read();
         
         Assert.Throws<Exception>(() =>
         {

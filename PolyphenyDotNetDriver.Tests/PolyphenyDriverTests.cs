@@ -144,6 +144,8 @@ public class PolyphenyDriverTests
             WithConnection(connection).
             WithCommandText("SELECT * FROM test");
         var reader = command.ExecuteReader();
+        reader.Read();
+        
         var resultSets = reader.ResultSets;
         Assert.That(resultSets.Columns, Has.Length.EqualTo(2));
         Assert.Multiple(() =>
@@ -241,6 +243,8 @@ public class PolyphenyDriverTests
             WithConnection(connection).
             WithCommandText("SELECT * FROM test");
         var reader = command.ExecuteReader();
+        reader.Read();
+        
         var resultSets = reader.ResultSets;
         Assert.That(resultSets.Columns, Has.Length.EqualTo(2));
         Assert.Multiple(() =>
