@@ -148,7 +148,12 @@ namespace PolyphenyDotNetDriver
                 }
             };
 
-            await SendRecv(request);
+            var response = await SendRecv(request);
+            var isCompatible = response?.ConnectionResponse?.IsCompatible ?? false;
+            if (!isCompatible)
+            {
+                throw new Exception("The API version is incompatible with server");
+            }
             Interlocked.Exchange(ref this._isConnected, PolyphenyConnectionState.StatusPolyphenyConnected);
         }
 
