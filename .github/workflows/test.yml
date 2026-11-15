@@ -1,0 +1,27 @@
+name: .NET driver checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Run unit and protocol tests
+        run: >-
+          dotnet test PolyphenyDotNetDriver.Tests/PolyphenyDotNetDriver.Tests.csproj
+          --configuration Release --filter 'TestCategory!=Integration'
+      - name: Build the NuGet package
+        run: >-
+          dotnet pack PolyphenyDotNetDriver/PolyphenyDotNetDriver.csproj
+          --configuration Release --no-restore

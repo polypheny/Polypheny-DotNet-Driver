@@ -18,6 +18,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Polypheny.Prism;
@@ -228,27 +229,33 @@ namespace PolyphenyDotNetDriver
             return reader;
         }
 
-        public Dictionary<object, object>[] ExecuteQueryMongo() => ExecuteQueryMongoAsync(CancellationToken.None).GetAwaiter().GetResult();
-        private async Task<Dictionary<object, object>[]> ExecuteQueryMongoAsync(CancellationToken cancellationToken)
+        public Dictionary<object, object>[] ExecuteQueryMongo() => ExecuteQueryMongo(null);
+
+        public Dictionary<object, object>[] ExecuteQueryMongo(string namespaceName)
+            => ExecuteQueryMongoAsync(namespaceName).GetAwaiter().GetResult();
+
+        private async Task<Dictionary<object, object>[]> ExecuteQueryMongoAsync(string namespaceName)
         {
             if (connection == null)
             {
                 throw new InvalidOperationException("Connection property must be non-null");
             }
 
-            var request = new Request()
+            var execute = new ExecuteUnparameterizedStatementRequest
             {
-                ExecuteUnparameterizedStatementRequest = new ExecuteUnparameterizedStatementRequest()
-                {
-                    LanguageName = "mongo",
-                    Statement = CommandText,
-                }
+                LanguageName = "mongo",
+                Statement = CommandText
             };
-            
-            var response = await this.connection.SendRecv(request);
+            if (namespaceName != null)
+            {
+                execute.NamespaceName = namespaceName;
+            }
+
+            var request = new Request { ExecuteUnparameterizedStatementRequest = execute };
+            var response = await this.connection.SendRecv(request).ConfigureAwait(false);
             var tmpId = response?.StatementResponse?.StatementId;
             
-            var newResponse = await this.connection.Receive();
+            var newResponse = await this.connection.Receive().ConfigureAwait(false);
             if (newResponse?.StatementResponse?.StatementId != tmpId)
             {
                 throw new Exception("StatementId mismatch");
@@ -260,21 +267,7 @@ namespace PolyphenyDotNetDriver
                 throw new Exception("Query should return document data, however the result is empty");
             }
 
-            var documents = documentFrame.Documents;
-            var result = new Dictionary<object, object>[documents.Count];
-            for (var i = 0; i < documents.Count; i++)
-            {
-                var currentRow = new Dictionary<object, object>();
-                foreach (var entry in documents[i].Entries)
-                {
-                    var key = ProtoHelper.FromProtoValue(entry.Key);
-                    var value = ProtoHelper.FromProtoValue(entry.Value);
-                    currentRow[key] = value;
-                }
-                result[i] = currentRow;
-            }
-
-            return result;
+            return documentFrame.Documents.Select(ProtoHelper.FromProtoDocument).ToArray();
         }
     }
 }

@@ -30,24 +30,13 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Content Include="..\README.md">
-      <Pack>true</Pack>
-      <PackagePath>README.md</PackagePath>
-    </Content>
-    <Content Include="..\LICENSE">
-      <Pack>true</Pack>
-      <PackagePath>LICENSE</PackagePath>
-    </Content>
+    <None Include="..\README.md" Pack="true" PackagePath="" />
+    <None Include="..\LICENSE" Pack="true" PackagePath="" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Google.Protobuf" Version="3.27.0" />
-    <PackageReference Include="Grpc.Net.Client" Version="2.63.0" />
-    <PackageReference Include="Grpc.Tools" Version="2.64.0">
-      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-      <PrivateAssets>all</PrivateAssets>
-    </PackageReference>
-    <PackageReference Include="Polypheny.Prism" Version="1.9.0" />
+    <PackageReference Include="Polypheny.Prism" Version="2.2.0" />
   </ItemGroup>
 
 </Project>
