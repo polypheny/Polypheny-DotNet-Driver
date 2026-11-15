@@ -15,8 +15,11 @@
  */
 
 using System;
+using System.Buffers.Binary;
+using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
+using System.IO;
 using System.Linq;
 using System.Net.Sockets;
 using System.Threading;
@@ -104,73 +107,124 @@ namespace PolyphenyDotNetDriver
             Interlocked.Exchange(ref this._isConnected, PolyphenyConnectionState.StatusDisconnected);
         }
 
-        public override void Close() => CloseAsync(CancellationToken.None).GetAwaiter().GetResult();
+        public override void Close() => CloseAsync().GetAwaiter().GetResult();
 
-        private async Task CloseAsync(CancellationToken cancellationToken)
+        public override async Task CloseAsync()
         {
-            var request = new Request()
+            if (State == ConnectionState.Closed)
             {
-                DisconnectRequest = new DisconnectRequest()
-            };
-            await SendRecv(request);
-            Interlocked.Exchange(ref this._isConnected, PolyphenyConnectionState.StatusServerConnected);
+                return;
+            }
 
             try
             {
-                await this._stream.FlushAsync(cancellationToken);
-                this._stream.Close();
-            }
-            catch (Exception e)
-            {
-                Console.WriteLine(e);
+                if (State == ConnectionState.Open)
+                {
+                    await SendRecv(new Request { DisconnectRequest = new DisconnectRequest() }).ConfigureAwait(false);
+                }
             }
             finally
             {
-                this._client.Close();
-                Interlocked.Exchange(ref this._isConnected, PolyphenyConnectionState.StatusDisconnected);
+                DisposeTransport();
             }
         }
-        
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                DisposeTransport();
+            }
+            base.Dispose(disposing);
+        }
+
+        private void DisposeTransport()
+        {
+            this._client?.Dispose();
+            this._client = null;
+            this._stream = null;
+            Interlocked.Exchange(ref this._isConnected, PolyphenyConnectionState.StatusDisconnected);
+        }
+
         public override void Open() => OpenAsync(CancellationToken.None).GetAwaiter().GetResult();
 
         public override async Task OpenAsync(CancellationToken cancellationToken)
         {
-            this._client = new TcpClient(this._hostname, this._port);
-            this._stream = this._client.GetStream();
+            if (State != ConnectionState.Closed)
+            {
+                throw new InvalidOperationException("The connection is already open or opening.");
+            }
+
+            this._client = new TcpClient();
             Interlocked.Exchange(ref this._isConnected, PolyphenyConnectionState.StatusServerConnected);
 
-            var recvVersion = await this.RawReceive(1);
-
-            var sendVersion = System.Text.Encoding.ASCII.GetBytes(TransportVersion);
-            await this.RawSend(sendVersion, 1);
-
-            if (!recvVersion.SequenceEqual(sendVersion))
+            try
             {
-                throw new Exception("The transport version is incompatible with server");
-            }
-
-            var request = new Request()
-            {
-                ConnectionRequest = new ConnectionRequest()
+                await this._client.ConnectAsync(this._hostname, this._port, cancellationToken).ConfigureAwait(false);
+                this._stream = this._client.GetStream();
+                var recvVersion = await RawReceive(1, cancellationToken).ConfigureAwait(false);
+                var sendVersion = System.Text.Encoding.ASCII.GetBytes(TransportVersion);
+                if (!recvVersion.SequenceEqual(sendVersion))
                 {
-                    MajorApiVersion = Convert.ToInt32(Version.Major),
-                    MinorApiVersion = Convert.ToInt32(Version.Minor),
-                    Username = this._username,
-                    Password = this._password,
-                    ConnectionProperties = new ConnectionProperties()
-                    {
-                        IsAutoCommit = false,
-                    }
+                    throw new InvalidOperationException("The transport version is incompatible with the server.");
                 }
-            };
+                await RawSend(sendVersion, 1, cancellationToken).ConfigureAwait(false);
 
-            var response = await SendRecv(request);
-            var isCompatible = response?.ConnectionResponse?.IsCompatible ?? false;
-            if (!isCompatible)
-            {
-                throw new Exception("The API version is incompatible with server");
+                var request = new Request
+                {
+                    ConnectionRequest = new ConnectionRequest
+                    {
+                        MajorApiVersion = Convert.ToInt32(Version.Major),
+                        MinorApiVersion = Convert.ToInt32(Version.Minor),
+                        Username = this._username,
+                        Password = this._password,
+                        ConnectionProperties = new ConnectionProperties { IsAutoCommit = false }
+                    }
+                };
+
+                var response = await SendRecv(request, cancellationToken).ConfigureAwait(false);
+                if (response.ConnectionResponse?.IsCompatible != true)
+                {
+                    throw new InvalidOperationException(response.ErrorResponse?.Message ?? "The Prism API version is incompatible with the server.");
+                }
+                Interlocked.Exchange(ref this._isConnected, PolyphenyConnectionState.StatusPolyphenyConnected);
             }
-            Interlocked.Exchange(ref this._isConnected, PolyphenyConnectionState.StatusPolyphenyConnected);
+            catch
+            {
+                DisposeTransport();
+                throw;
+            }
+        }
+
+        /// <summary>Searches for entities in the specified Polypheny namespace.</summary>
+        /// <param name="namespaceName">The namespace to search.</param>
+        /// <param name="entityPattern">An optional entity name pattern. Null returns all entities.</param>
+        public IReadOnlyList<Entity> SearchEntities(string namespaceName, string entityPattern = null)
+            => SearchEntitiesAsync(namespaceName, entityPattern).GetAwaiter().GetResult();
+
+        /// <summary>Asynchronously searches for entities in the specified Polypheny namespace.</summary>
+        /// <param name="namespaceName">The namespace to search.</param>
+        /// <param name="entityPattern">An optional entity name pattern. Null returns all entities.</param>
+        public async Task<IReadOnlyList<Entity>> SearchEntitiesAsync(string namespaceName, string entityPattern = null)
+        {
+            if (string.IsNullOrWhiteSpace(namespaceName))
+            {
+                throw new ArgumentException("A namespace name is required.", nameof(namespaceName));
+            }
+            if (State != ConnectionState.Open)
+            {
+                throw new InvalidOperationException("Open the connection before searching for entities.");
+            }
+
+            var request = new EntitiesRequest { NamespaceName = namespaceName };
+            if (entityPattern != null)
+            {
+                request.EntityPattern = entityPattern;
+            }
+
+            var response = await SendRecv(new Request { EntitiesRequest = request }).ConfigureAwait(false);
+            return response.EntitiesResponse?.Entities
+                ?? throw new InvalidOperationException(response.ErrorResponse?.Message ?? "Expected a Prism entities response.");
         }
 
         public async Task Ping(CancellationToken cancellationToken = default)
@@ -221,87 +275,70 @@ namespace PolyphenyDotNetDriver
             this._password = usernameAndPassword[1];
         }
 
-        private async Task<byte[]> RawReceive(int lengthSize)
+        private async Task<byte[]> RawReceive(int lengthSize, CancellationToken cancellationToken = default)
         {
-            if (lengthSize > 8)
+            if (lengthSize is < 1 or > 8)
             {
-                throw new Exception("Invalid length size, expect the lengthSize parameter is not greater than 8");
+                throw new ArgumentOutOfRangeException(nameof(lengthSize));
             }
 
             var lengthBuf = new byte[8];
-            var length = new byte[lengthSize];
-            var bytesRead = await _stream.ReadAsync(length.AsMemory(0, lengthSize));
-            if (bytesRead != lengthSize)
+            await ReadFully(lengthBuf.AsMemory(0, lengthSize), cancellationToken).ConfigureAwait(false);
+            var frameLength = BinaryPrimitives.ReadUInt64LittleEndian(lengthBuf);
+            if (frameLength > int.MaxValue)
             {
-                throw new Exception("Failed to read the specified number of bytes");
+                throw new IOException("The Prism frame is too large.");
             }
 
-            for (var i = 0; i < lengthBuf.Length; i++)
-            {
-                if (i < lengthSize)
-                    lengthBuf[i] = length[i];
-                else
-                    lengthBuf[i] = 0;
-            }
-
-            var recvLength = BitConverter.ToUInt64(lengthBuf, 0);
-            var buf = new byte[recvLength];
-            bytesRead = await _stream.ReadAsync(buf.AsMemory(0, (int)recvLength));
-            if ((ulong)bytesRead != recvLength)
-            {
-                throw new Exception("Failed to read the specified number of bytes");
-            }
-
+            var buf = new byte[(int)frameLength];
+            await ReadFully(buf, cancellationToken).ConfigureAwait(false);
             return buf;
         }
 
-        private async Task RawSend(byte[] serialized, int lengthSize)
+        private async Task ReadFully(Memory<byte> buffer, CancellationToken cancellationToken)
         {
-            if (lengthSize > 8)
+            while (!buffer.IsEmpty)
             {
-                throw new Exception("Invalid length size, expect the lengthSize parameter is not greater than 8");
+                var bytesRead = await _stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+                if (bytesRead == 0)
+                {
+                    throw new EndOfStreamException("The server closed the connection in the middle of a Prism frame.");
+                }
+                buffer = buffer[bytesRead..];
+            }
+        }
+
+        private async Task RawSend(byte[] serialized, int lengthSize, CancellationToken cancellationToken = default)
+        {
+            if (lengthSize is < 1 or > 8)
+            {
+                throw new ArgumentOutOfRangeException(nameof(lengthSize));
             }
 
-            var lengthBuf = new byte[8];
-            var length = new byte[lengthSize];
-            var lenSerialized = serialized.Length;
-
-            if (lenSerialized >= Math.Pow(2, lengthSize * 8 - 1))
+            if (serialized.Length >= Math.Pow(2, lengthSize * 8 - 1))
             {
                 throw new Exception(
                     "The size of the serialized message is too large to be put in a byte array of size lengthSize");
             }
 
-            BitConverter.GetBytes((ulong)lenSerialized).CopyTo(lengthBuf, 0);
-
-            for (var i = 0; i < lengthSize; i++)
-            {
-                length[i] = lengthBuf[i];
-            }
-
-            await _stream.WriteAsync(length);
-            await _stream.WriteAsync(serialized);
+            var lengthBuf = new byte[8];
+            BinaryPrimitives.WriteUInt64LittleEndian(lengthBuf, (ulong)serialized.Length);
+            await _stream.WriteAsync(lengthBuf.AsMemory(0, lengthSize), cancellationToken).ConfigureAwait(false);
+            await _stream.WriteAsync(serialized, cancellationToken).ConfigureAwait(false);
         }
 
-        public async Task Send(Request req, int lengthSize=8)
-        {
-            var buf = req.ToByteArray();
-            await this.RawSend(buf, lengthSize);
-        }
+        public Task Send(Request req, int lengthSize=8) => RawSend(req.ToByteArray(), lengthSize);
         
         // add default lengthSize
         public async Task<Response> Receive(int lengthSize=8)
-        {
-            var recv = await this.RawReceive(lengthSize);
-            var parser = new MessageParser<Response>(() => new Response());
-            var result = parser.ParseFrom(recv);
-            return result;
-        }
+            => Response.Parser.ParseFrom(await RawReceive(lengthSize).ConfigureAwait(false));
 
-        public async Task<Response> SendRecv(Request m)
+        public Task<Response> SendRecv(Request m) => SendRecv(m, CancellationToken.None);
+
+        private async Task<Response> SendRecv(Request request, CancellationToken cancellationToken)
         {
-            await this.Send(m);
-            return await this.Receive();
+            await RawSend(request.ToByteArray(), 8, cancellationToken).ConfigureAwait(false);
+            return Response.Parser.ParseFrom(await RawReceive(8, cancellationToken).ConfigureAwait(false));
         }
     }
 }

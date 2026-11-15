@@ -15,7 +15,8 @@
  */
 
 using System;
-using Google.Protobuf.WellKnownTypes;
+using System.Collections.Generic;
+using System.Linq;
 using Polypheny.Prism;
 
 namespace PolyphenyDotNetDriver
@@ -73,8 +74,30 @@ namespace PolyphenyDotNetDriver
             {
                 return val.String.String;
             }
+            if (val.Null != null)
+            {
+                return null;
+            }
+            if (val.List != null)
+            {
+                return val.List.Values.Select(FromProtoValue).ToArray();
+            }
+            if (val.Document != null)
+            {
+                return FromProtoDocument(val.Document);
+            }
 
             throw new Exception("Failed to convert ProtoValue. This is likely a bug.");
+        }
+
+        internal static Dictionary<object, object> FromProtoDocument(ProtoDocument document)
+        {
+            var values = new Dictionary<object, object>(document.Entries.Count);
+            foreach (var entry in document.Entries)
+            {
+                values.Add(entry.Key, FromProtoValue(entry.Value));
+            }
+            return values;
         }
     }
 }

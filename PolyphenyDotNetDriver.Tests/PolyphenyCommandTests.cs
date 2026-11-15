@@ -202,6 +202,66 @@ public class PolyphenyCommandTests
     }
     
     [Test]
+    public void ExecuteQueryMongo_DecodesPrismDocumentMap()
+    {
+        var nested = new ProtoDocument
+        {
+            Entries = { { "severity", new ProtoValue { Integer = new ProtoInteger { Integer = 4 } } } }
+        };
+        var document = new ProtoDocument
+        {
+            Entries =
+            {
+                { "patient_id", new ProtoValue { String = new ProtoString { String = "p1" } } },
+                { "nested", new ProtoValue { Document = nested } },
+                {
+                    "tags", new ProtoValue
+                    {
+                        List = new ProtoList
+                        {
+                            Values =
+                            {
+                                new ProtoValue { String = new ProtoString { String = "fever" } },
+                                new ProtoValue { Null = new ProtoNull() }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        _mockConnection.Setup(x => x.SendRecv(It.Is<Request>(request =>
+            request.ExecuteUnparameterizedStatementRequest.NamespaceName == "patients"
+            && request.ExecuteUnparameterizedStatementRequest.Statement == "db.symptoms.find()"))).ReturnsAsync(new Response
+        {
+            StatementResponse = new StatementResponse { StatementId = 1 }
+        });
+        _mockConnection.Setup(x => x.Receive(8)).ReturnsAsync(new Response
+        {
+            StatementResponse = new StatementResponse
+            {
+                StatementId = 1,
+                Result = new StatementResult
+                {
+                    Frame = new Frame
+                    {
+                        IsLast = true,
+                        DocumentFrame = new DocumentFrame { Documents = { document } }
+                    }
+                }
+            }
+        });
+
+        var command = new PolyphenyCommand().WithConnection(_mockConnection.Object).WithCommandText("db.symptoms.find()");
+        var results = command.ExecuteQueryMongo("patients");
+
+        Assert.That(results, Has.Length.EqualTo(1));
+        Assert.That(results[0]["patient_id"], Is.EqualTo("p1"));
+        Assert.That(((Dictionary<object, object>)results[0]["nested"])["severity"], Is.EqualTo(4));
+        Assert.That(results[0]["tags"], Is.EqualTo(new object?[] { "fever", null }));
+    }
+
+    [Test]
     public void ExecuteNonQuery_WithMismatchStatementId_ThrowsException()
     {
         var response = new Response()

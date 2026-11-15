@@ -16,17 +16,16 @@
 
 namespace PolyphenyDotNetDriver.Tests;
 
+[Category("Integration")]
 public class PolyphenyDriverTests
 {
-    [SetUp]
-    public void Setup()
-    {
-    }
+    private static PolyphenyConnection CreateConnection() => PolyphenyDriver.OpenConnection(
+        Environment.GetEnvironmentVariable("POLYPHENY_TEST_CONNECTION") ?? "localhost:20590,pa:");
 
     [Test]
     public void ShouldOpenAndCloseConnection()
     {
-        var connection = PolyphenyDriver.OpenConnection("localhost:20590,pa:");
+        using var connection = CreateConnection();
         connection.Open();
         connection.Close();
     }
@@ -34,7 +33,7 @@ public class PolyphenyDriverTests
     [Test]
     public async Task ShouldPingServer()
     {
-        var connection = PolyphenyDriver.OpenConnection("localhost:20590,pa:");
+        using var connection = CreateConnection();
         connection.Open();
         await connection.Ping();
         connection.Close();
@@ -43,7 +42,7 @@ public class PolyphenyDriverTests
     [Test]
     public Task ShouldExecuteNonQuery()
     {
-        var connection = PolyphenyDriver.OpenConnection("localhost:20590,pa:");
+        using var connection = CreateConnection();
         connection.Open();
         var command = new PolyphenyCommand().
             WithConnection(connection).
@@ -70,7 +69,7 @@ public class PolyphenyDriverTests
     [Test]
     public Task ShouldExecuteNonQueryPrepared()
     {
-        var connection = PolyphenyDriver.OpenConnection("localhost:20590,pa:");
+        using var connection = CreateConnection();
         connection.Open();
         var command = new PolyphenyCommand().
             WithConnection(connection).
@@ -106,7 +105,7 @@ public class PolyphenyDriverTests
     [Test]
     public Task ShouldAbleToQueryData()
     {
-        var connection = PolyphenyDriver.OpenConnection("localhost:20590,pa:");
+        using var connection = CreateConnection();
         connection.Open();
 
         var command = new PolyphenyCommand().
@@ -124,7 +123,7 @@ public class PolyphenyDriverTests
     [Test]
     public Task ShouldAbleToQueryDataAfterInsert()
     {
-        var connection = PolyphenyDriver.OpenConnection("localhost:20590,pa:");
+        using var connection = CreateConnection();
         connection.Open();
         var command = new PolyphenyCommand().
             WithConnection(connection).
@@ -203,7 +202,7 @@ public class PolyphenyDriverTests
     [Test]
     public Task ShouldAbleToQueryMongo()
     {
-        var connection = PolyphenyDriver.OpenConnection("localhost:20590,pa:");
+        using var connection = CreateConnection();
         connection.Open();
 
         var command = new PolyphenyCommand().
@@ -219,7 +218,7 @@ public class PolyphenyDriverTests
     [Test]
     public Task ShouldAbleToCommitTransaction()
     {
-        var connection = PolyphenyDriver.OpenConnection("localhost:20590,pa:");
+        using var connection = CreateConnection();
         connection.Open();
         var transaction = connection.BeginTransaction();
         var command = new PolyphenyCommand().
@@ -302,7 +301,7 @@ public class PolyphenyDriverTests
     [Test]
     public Task ShouldAbleToRollbackTransaction()
     {
-        var connection = PolyphenyDriver.OpenConnection("localhost:20590,pa:");
+        using var connection = CreateConnection();
         connection.Open();
         var command = new PolyphenyCommand().
             WithConnection(connection).
