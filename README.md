@@ -125,6 +125,12 @@ dotnet test PolyphenyDotNetDriver.Tests/PolyphenyDotNetDriver.Tests.csproj --fil
 
 For an interactive coverage report, install `dotnet-reportgenerator-globaltool` and run `test.sh` from `PolyphenyDotNetDriver.Tests` with the test server running.
 
+## Release the driver
+
+Run the **.NET driver release** workflow with a stable tag such as `v2.0.0` to test and download the NuGet package from GitHub Actions. Publishing a stable GitHub release with that tag attaches the package to the release and pushes the same package to NuGet.org.
+
+Before the first release, create the GitHub Actions environment `nuget` and set its `NUGET_USER` variable to the NuGet profile name of the person who registers the policy. Register a Trusted Publishing policy for repository owner `polypheny`, repository `Polypheny-DotNet-Driver`, workflow file `publish.yml`, and environment `nuget`. Select the scope to push new packages and package versions and use the exact package glob `PolyphenyDotNetDriver`. [NuGet Trusted Publishing setup](https://learn.microsoft.com/en-us/nuget/nuget-org/trusted-publishing#github-actions-setup)
+
 ## Roadmap
 See the [open issues](https://github.com/polypheny/Polypheny-DB/issues) for a list of proposed features (and known issues).
 

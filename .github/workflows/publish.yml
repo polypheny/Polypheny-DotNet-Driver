@@ -1,0 +1,158 @@
+name: .NET driver release
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/publish.yml'
+      - 'PolyphenyDotNetDriver/PolyphenyDotNetDriver.csproj'
+      - 'README.md'
+      - 'LICENSE'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to validate, such as v2.0.0
+        required: true
+        type: string
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Test and build NuGet package
+    if: github.event_name != 'release' || !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag || 'v0.0.0' }}
+    outputs:
+      package_name: ${{ steps.version.outputs.package_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Resolve package version
+        id: version
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Expected a stable release tag in vMAJOR.MINOR.PATCH format." >&2
+            exit 1
+          fi
+          version="${RELEASE_TAG#v}"
+          package_name="PolyphenyDotNetDriver.$version.nupkg"
+          echo "PACKAGE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "PACKAGE_NAME=$package_name" >> "$GITHUB_ENV"
+          echo "package_name=$package_name" >> "$GITHUB_OUTPUT"
+
+      - name: Run unit and protocol tests
+        run: >-
+          dotnet test PolyphenyDotNetDriver.Tests/PolyphenyDotNetDriver.Tests.csproj
+          --configuration Release --filter 'TestCategory!=Integration'
+          -p:Version="$PACKAGE_VERSION" -p:ContinuousIntegrationBuild=true
+
+      - name: Pack tested assemblies
+        run: >-
+          dotnet pack PolyphenyDotNetDriver/PolyphenyDotNetDriver.csproj
+          --configuration Release --no-build --output artifacts
+          -p:Version="$PACKAGE_VERSION" -p:ContinuousIntegrationBuild=true
+          -p:RepositoryCommit="$GITHUB_SHA"
+
+      - name: Verify NuGet package contents
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          from zipfile import ZipFile
+
+          project = ET.parse("PolyphenyDotNetDriver/PolyphenyDotNetDriver.csproj")
+          prism_version = project.find(".//PackageReference[@Include='Polypheny.Prism']").get("Version")
+          with ZipFile(Path("artifacts") / os.environ["PACKAGE_NAME"]) as package:
+              manifest = ET.fromstring(package.read("PolyphenyDotNetDriver.nuspec"))
+              metadata = manifest.find("{*}metadata")
+              assert metadata.findtext("{*}id") == "PolyphenyDotNetDriver"
+              assert metadata.findtext("{*}version") == os.environ["PACKAGE_VERSION"]
+              assert metadata.findtext("{*}description") == project.findtext(".//Description")
+              assert metadata.findtext("{*}readme") == "README.md"
+              license_file = metadata.find("{*}license")
+              assert license_file.attrib["type"] == "file" and license_file.text == "LICENSE"
+              assert metadata.find("{*}repository").attrib["commit"] == os.environ["GITHUB_SHA"]
+              prism = metadata.find(".//{*}dependency[@id='Polypheny.Prism']")
+              assert prism.attrib["version"] == prism_version
+              package.getinfo("lib/net6.0/PolyphenyDotNetDriver.dll")
+              for name in ("README.md", "LICENSE"):
+                  assert package.read(name) == Path(name).read_bytes()
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dotnet-nuget-package
+          path: artifacts/${{ env.PACKAGE_NAME }}
+          if-no-files-found: error
+
+  github-release:
+    name: Attach package to GitHub release
+    if: github.event_name == 'release' && !github.event.release.prerelease
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dotnet-nuget-package
+          path: artifacts
+
+      - name: Attach the verified NuGet package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          PACKAGE_NAME: ${{ needs.package.outputs.package_name }}
+        run: |
+          assets=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          if grep -Fxq "$PACKAGE_NAME" <<< "$assets"; then
+            gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --pattern "$PACKAGE_NAME" --dir "$RUNNER_TEMP/attached"
+            cmp "artifacts/$PACKAGE_NAME" "$RUNNER_TEMP/attached/$PACKAGE_NAME"
+          else
+            gh release upload "$RELEASE_TAG" "artifacts/$PACKAGE_NAME" --repo "$GITHUB_REPOSITORY"
+          fi
+
+  nuget:
+    name: Publish package to NuGet.org
+    if: github.event_name == 'release' && !github.event.release.prerelease
+    needs: package
+    runs-on: ubuntu-latest
+    environment: nuget
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dotnet-nuget-package
+          path: artifacts
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Authenticate to NuGet with Trusted Publishing
+        id: login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      - name: Push the verified package
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+          PACKAGE_NAME: ${{ needs.package.outputs.package_name }}
+        run: >-
+          dotnet nuget push "artifacts/$PACKAGE_NAME"
+          --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate

@@ -23,6 +23,7 @@
     <Authors>Polypheny</Authors>
     <Company>Polypheny</Company>
     <Product>PolyphenyDotNetDriver</Product>
+    <Description>.NET driver for Polypheny-DB with SQL, MongoQL and Prism entity metadata support.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageLicenseFile>LICENSE</PackageLicenseFile>
     <RepositoryUrl>https://github.com/polypheny/Polypheny-DotNet-Driver</RepositoryUrl>
