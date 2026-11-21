@@ -116,7 +116,7 @@ public class ProtoHelperTests
             123.45,
             "test",
             true,
-            null
+            new PolyphenyDecimal(0, 5)
         };
 
         for (var i = 0; i < input.Length; i++)
@@ -129,9 +129,9 @@ public class ProtoHelperTests
     [Test]
     public void FromProtoValue_WithUnsupportedType_ThrowsException()
     {
-        var input = new ProtoValue { Date = new ProtoDate() };
+        var input = new ProtoValue();
 
-        var ex = Assert.Throws<Exception>(() => ProtoHelper.FromProtoValue(input));
-        Assert.That(ex?.Message, Does.Contain("Failed to convert ProtoValue. This is likely a bug."));
+        var ex = Assert.Throws<NotSupportedException>(() => ProtoHelper.FromProtoValue(input));
+        Assert.That(ex?.Message, Does.Contain("no supported value case"));
     }
 }

@@ -9,12 +9,13 @@
 
 # Polypheny .NET Driver
 
-Connect .NET applications to Polypheny-DB over the Prism query interface. The driver supports SQL and MongoQL (MQL).
+Connect .NET applications to Polypheny-DB over the Prism query interface. The driver supports SQL, MongoQL (MQL) and Cypher.
 
 ## Requirements
 
 - The driver targets .NET 6. Use the .NET 8 SDK to run this repository's tests.
 - Connect to a Polypheny-DB server with a compatible Prism 2.x interface. Document collection metadata needs server support introduced in Prism 2.2. A Prism 1.x server requires an earlier driver.
+- Cypher queries require a server with Cypher enabled over Prism 2.3. The driver uses the published `Polypheny.Prism` 2.3.0 NuGet package.
 - Enable the Prism query interface on the server. The examples use its default TCP port `20590` and the local development credentials `pa` with an empty password.
 
 See the [Polypheny-DB setup instructions](https://github.com/polypheny/Polypheny-DB) to start a server.
@@ -85,6 +86,70 @@ foreach (var document in query.ExecuteQueryMongo("patients"))
 
 Document keys are strings. Nested documents are dictionaries and lists are object arrays.
 
+## Query graphs with Cypher
+
+Set the graph namespace explicitly. A graph-only projection returns a flat page of nodes and edges in `Elements`.
+This example assumes a graph namespace named `social` containing `Person` nodes.
+
+```csharp
+using var query = new PolyphenyCommand()
+    .WithConnection(connection)
+    .WithCommandText("MATCH (n:Person) RETURN n");
+using var result = query.ExecuteCypher("social", fetchSize: 100);
+do
+{
+    foreach (var node in result.Elements.OfType<GraphNode>())
+        Console.WriteLine($"{node.Id}: {node.Properties["name"]}");
+} while (result.FetchNext());
+```
+
+Use `ExecuteCypherAsync`, `FetchNextAsync` and `await using` for asynchronous access.
+An empty non-final page can occur, so continue fetching until `FetchNext` returns false.
+Fetch size counts source rows. A row containing a node, an edge and another node can therefore produce three elements.
+
+Mixed graph and scalar projections return columns and rows. The example keeps the column order from `RETURN`.
+
+```csharp
+using var mixed = new PolyphenyCommand()
+    .WithConnection(connection)
+    .WithCommandText("MATCH (n:Person) RETURN n AS node,n.name AS name")
+    .ExecuteCypher("social", fetchSize: 100);
+do
+{
+    foreach (var row in mixed.Rows)
+    {
+        var node = (GraphNode)row[0];
+        Console.WriteLine($"{node.Id}: {row[1]}");
+    }
+} while (mixed.FetchNext());
+```
+
+`GraphNode` and `GraphEdge` retain identifiers, names, labels and recursively decoded properties.
+Edges also expose `Left`, `Right` and `Direction`.
+A path in a mixed projection is a `GraphPath`, whose `Nodes` and `Edges` follow traversal order.
+An edge retains its original endpoints and direction when traversed in reverse.
+A whole-graph value in a row is a `GraphValue`, including isolated nodes.
+Standalone paths and whole-graph queries use the flat graph stream, where path boundaries are not available.
+Exact decimal values, including Cypher numeric literals, are represented by `PolyphenyDecimal`.
+Its `UnscaledValue` and `Scale` preserve the value as `UnscaledValue * 10^(-Scale)`.
+`ToString()` uses an exact base-10 exponent representation.
+Binary and file values decode to byte arrays. Dates and timestamps are UTC `DateTime` values,
+times are `TimeSpan` values, and `PolyphenyInterval` preserves the separate `Months` and
+`Milliseconds` components of an interval.
+
+Inspect `Kind` to distinguish `Graph`, `Rows` and `Scalar` results.
+`RowsAffected` is populated for scalar command acknowledgments.
+Cypher statements producing relational results, including update-count rows, expose those values through `Rows`.
+Dispose every result to close its server statement, including partially fetched results.
+The connection can then execute another query.
+Run one operation at a time on a connection. Fetching and disposing the same result are serialized
+so disposal waits for its pending page response.
+Results belong to the session that created them. Reopening a connection does not reactivate old results.
+
+Connections use manual transactions by default. Use `connection.BeginTransaction().Commit()` or `Rollback()`
+for graph writes. For autocommit, construct a connection with `new PolyphenyConfig { AutoCommit = true }`.
+Prism accepts one Cypher statement per request. Prepared and parameterized Cypher statements are unsupported.
+
 ## Discover entity metadata
 
 Use `SearchEntities` or `SearchEntitiesAsync` on an open connection. Supply a server-side name pattern to filter results, or omit it to list the namespace.
@@ -118,6 +183,8 @@ dotnet test PolyphenyDotNetDriver.Tests/PolyphenyDotNetDriver.Tests.csproj --fil
 ```
 
 Use a dedicated Polypheny test server for the integration tests, which create and drop tables. The default endpoint is `localhost:20590,pa:`. Set `POLYPHENY_TEST_CONNECTION` to use another endpoint.
+The graph integration tests also create a private graph namespace, exercise paging and transaction handling,
+and remove that namespace. They require the Prism 2.3 graph server described above.
 
 ```sh
 dotnet test PolyphenyDotNetDriver.Tests/PolyphenyDotNetDriver.Tests.csproj --filter 'TestCategory=Integration'

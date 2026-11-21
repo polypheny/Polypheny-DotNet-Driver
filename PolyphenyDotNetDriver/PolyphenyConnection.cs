@@ -87,6 +87,7 @@ namespace PolyphenyDotNetDriver
         public int IsConnected => this._isConnected;
 
         private string TransportVersion { get; }
+        private bool AutoCommit { get; }
 
         private string _hostname;
         private int _port;
@@ -95,12 +96,15 @@ namespace PolyphenyDotNetDriver
 
         private TcpClient _client;
         private NetworkStream _stream;
+        private long _sessionVersion;
+        internal long SessionVersion => Volatile.Read(ref _sessionVersion);
 
         public PolyphenyConnection(string connectionString, PolyphenyConfig config)
         {
             Database = config.Database;
             DataSource = config.DataSource;
             TransportVersion = config.TransportVersion;
+            AutoCommit = config.AutoCommit;
             
             this._connectionString = connectionString;
             UpdateConnectionString();
@@ -156,6 +160,7 @@ namespace PolyphenyDotNetDriver
             }
 
             this._client = new TcpClient();
+            Interlocked.Increment(ref _sessionVersion);
             Interlocked.Exchange(ref this._isConnected, PolyphenyConnectionState.StatusServerConnected);
 
             try
@@ -178,7 +183,7 @@ namespace PolyphenyDotNetDriver
                         MinorApiVersion = Convert.ToInt32(Version.Minor),
                         Username = this._username,
                         Password = this._password,
-                        ConnectionProperties = new ConnectionProperties { IsAutoCommit = false }
+                        ConnectionProperties = new ConnectionProperties { IsAutoCommit = AutoCommit }
                     }
                 };
 
@@ -282,29 +287,45 @@ namespace PolyphenyDotNetDriver
                 throw new ArgumentOutOfRangeException(nameof(lengthSize));
             }
 
+            var stream = _stream ?? throw new InvalidOperationException("The connection is closed.");
             var lengthBuf = new byte[8];
-            await ReadFully(lengthBuf.AsMemory(0, lengthSize), cancellationToken).ConfigureAwait(false);
+            await ReadFully(stream, lengthBuf.AsMemory(0, lengthSize), cancellationToken).ConfigureAwait(false);
             var frameLength = BinaryPrimitives.ReadUInt64LittleEndian(lengthBuf);
             if (frameLength > int.MaxValue)
             {
+                if (ReferenceEquals(_stream, stream))
+                {
+                    DisposeTransport();
+                }
                 throw new IOException("The Prism frame is too large.");
             }
 
             var buf = new byte[(int)frameLength];
-            await ReadFully(buf, cancellationToken).ConfigureAwait(false);
+            await ReadFully(stream, buf, cancellationToken).ConfigureAwait(false);
             return buf;
         }
 
-        private async Task ReadFully(Memory<byte> buffer, CancellationToken cancellationToken)
+        private async Task ReadFully(NetworkStream stream, Memory<byte> buffer, CancellationToken cancellationToken)
         {
-            while (!buffer.IsEmpty)
+            try
             {
-                var bytesRead = await _stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
-                if (bytesRead == 0)
+                while (!buffer.IsEmpty)
                 {
-                    throw new EndOfStreamException("The server closed the connection in the middle of a Prism frame.");
+                    var bytesRead = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+                    if (bytesRead == 0)
+                    {
+                        throw new EndOfStreamException("The server closed the connection in the middle of a Prism frame.");
+                    }
+                    buffer = buffer[bytesRead..];
                 }
-                buffer = buffer[bytesRead..];
+            }
+            catch (Exception error) when (error is IOException or ObjectDisposedException)
+            {
+                if (ReferenceEquals(_stream, stream))
+                {
+                    DisposeTransport();
+                }
+                throw;
             }
         }
 
@@ -323,8 +344,20 @@ namespace PolyphenyDotNetDriver
 
             var lengthBuf = new byte[8];
             BinaryPrimitives.WriteUInt64LittleEndian(lengthBuf, (ulong)serialized.Length);
-            await _stream.WriteAsync(lengthBuf.AsMemory(0, lengthSize), cancellationToken).ConfigureAwait(false);
-            await _stream.WriteAsync(serialized, cancellationToken).ConfigureAwait(false);
+            var stream = _stream ?? throw new InvalidOperationException("The connection is closed.");
+            try
+            {
+                await stream.WriteAsync(lengthBuf.AsMemory(0, lengthSize), cancellationToken).ConfigureAwait(false);
+                await stream.WriteAsync(serialized, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception error) when (error is IOException or ObjectDisposedException)
+            {
+                if (ReferenceEquals(_stream, stream))
+                {
+                    DisposeTransport();
+                }
+                throw;
+            }
         }
 
         public Task Send(Request req, int lengthSize=8) => RawSend(req.ToByteArray(), lengthSize);

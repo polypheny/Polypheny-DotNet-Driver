@@ -17,6 +17,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using Polypheny.Prism;
 
 namespace PolyphenyDotNetDriver
@@ -66,13 +67,37 @@ namespace PolyphenyDotNetDriver
             }
             if (val.BigDecimal != null)
             {
-                // TODO: add support for big decimal
-                // seems like need external library
-                return null;
+                return new PolyphenyDecimal(
+                    new BigInteger(val.BigDecimal.UnscaledValue.Span, isUnsigned: false, isBigEndian: true),
+                    val.BigDecimal.Scale);
             }
             if (val.String != null)
             {
                 return val.String.String;
+            }
+            if (val.Binary != null)
+            {
+                return val.Binary.Binary.ToByteArray();
+            }
+            if (val.File != null)
+            {
+                return val.File.Binary.ToByteArray();
+            }
+            if (val.Date != null)
+            {
+                return DateTime.UnixEpoch.AddDays(val.Date.Date);
+            }
+            if (val.Time != null)
+            {
+                return TimeSpan.FromMilliseconds(val.Time.Time);
+            }
+            if (val.Timestamp != null)
+            {
+                return DateTimeOffset.FromUnixTimeMilliseconds(val.Timestamp.Timestamp).UtcDateTime;
+            }
+            if (val.Interval != null)
+            {
+                return new PolyphenyInterval(val.Interval.Months, val.Interval.Milliseconds);
             }
             if (val.Null != null)
             {
@@ -86,8 +111,24 @@ namespace PolyphenyDotNetDriver
             {
                 return FromProtoDocument(val.Document);
             }
+            if (val.Node != null)
+            {
+                return new GraphNode(val.Node);
+            }
+            if (val.Edge != null)
+            {
+                return new GraphEdge(val.Edge);
+            }
+            if (val.Path != null)
+            {
+                return new GraphPath(val.Path);
+            }
+            if (val.Graph != null)
+            {
+                return new GraphValue(val.Graph);
+            }
 
-            throw new Exception("Failed to convert ProtoValue. This is likely a bug.");
+            throw new NotSupportedException("The Prism value has no supported value case.");
         }
 
         internal static Dictionary<object, object> FromProtoDocument(ProtoDocument document)
