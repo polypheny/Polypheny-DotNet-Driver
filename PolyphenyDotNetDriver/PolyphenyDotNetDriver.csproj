@@ -19,7 +19,7 @@
   <PropertyGroup>
     <TargetFramework>net6.0</TargetFramework>
     <PackageId>PolyphenyDotNetDriver</PackageId>
-    <Version>1.0.0</Version>
+    <Version>2.1.0</Version>
     <Authors>Polypheny</Authors>
     <Company>Polypheny</Company>
     <Product>PolyphenyDotNetDriver</Product>

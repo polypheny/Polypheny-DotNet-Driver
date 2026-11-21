@@ -22,7 +22,15 @@ See the [Polypheny-DB setup instructions](https://github.com/polypheny/Polypheny
 
 ## Installation
 
-Clone the repository and reference the driver project from your .NET application:
+From the directory containing your application project, install version `2.1.0` from NuGet. [PolyphenyDotNetDriver on NuGet](https://www.nuget.org/packages/PolyphenyDotNetDriver/2.1.0)
+
+```sh
+dotnet add package PolyphenyDotNetDriver --version 2.1.0
+```
+
+### Build from source
+
+To develop against a source checkout, clone the repository and reference the driver project from your .NET application.
 
 ```sh
 git clone https://github.com/polypheny/Polypheny-DotNet-Driver.git
