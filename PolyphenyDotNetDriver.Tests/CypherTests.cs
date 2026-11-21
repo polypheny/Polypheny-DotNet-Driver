@@ -27,6 +27,97 @@ namespace PolyphenyDotNetDriver.Tests;
 
 public class CypherTests
 {
+    [Test]
+    public void DecodesEveryPrimitiveCaseInsideGraphProperties()
+    {
+        var bytes = ByteString.CopyFrom(new byte[] { 0, 128, 255 });
+        var wire = Node("types", "Typed");
+        wire.Properties.Add("binary", new ProtoValue { Binary = new ProtoBinary { Binary = bytes } });
+        wire.Properties.Add("file", new ProtoValue { File = new ProtoFile { Binary = bytes } });
+        wire.Properties.Add("date", new ProtoValue { Date = new ProtoDate { Date = -1 } });
+        wire.Properties.Add("time", new ProtoValue { Time = new ProtoTime { Time = 86_399_999 } });
+        wire.Properties.Add("timestamp", new ProtoValue { Timestamp = new ProtoTimestamp { Timestamp = -1 } });
+        wire.Properties.Add("interval", new ProtoValue { Interval = new ProtoInterval { Months = -13, Milliseconds = 86_400_001 } });
+        wire.Properties.Add("decimal", new ProtoValue
+        {
+            BigDecimal = new ProtoBigDecimal { Scale = 2, UnscaledValue = ByteString.CopyFrom(new byte[] { 0x80 }) }
+        });
+        var node = (GraphNode)ProtoHelper.FromProtoValue(ProtoValue.Parser.ParseFrom(new ProtoValue { Node = wire }.ToByteArray()));
+        Assert.Multiple(() =>
+        {
+            Assert.That(node.Properties["binary"], Is.EqualTo(new byte[] { 0, 128, 255 }));
+            Assert.That(node.Properties["file"], Is.EqualTo(new byte[] { 0, 128, 255 }));
+            Assert.That(node.Properties["date"], Is.EqualTo(DateTime.UnixEpoch.AddDays(-1)));
+            Assert.That(((DateTime)node.Properties["date"]).Kind, Is.EqualTo(DateTimeKind.Utc));
+            Assert.That(node.Properties["time"], Is.EqualTo(TimeSpan.FromMilliseconds(86_399_999)));
+            Assert.That(node.Properties["timestamp"], Is.EqualTo(DateTime.UnixEpoch.AddMilliseconds(-1)));
+            Assert.That(((DateTime)node.Properties["timestamp"]).Kind, Is.EqualTo(DateTimeKind.Utc));
+            Assert.That(node.Properties["interval"], Is.EqualTo(new PolyphenyInterval(-13, 86_400_001)));
+            Assert.That(node.Properties["decimal"], Is.EqualTo(new PolyphenyDecimal(-128, 2)));
+        });
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task PendingExecutionKeepsItsOriginalConnectionWhenTheCommandIsReused(bool fail)
+    {
+        var first = new Mock<IPolyphenyConnection>(MockBehavior.Strict);
+        var other = new Mock<IPolyphenyConnection>(MockBehavior.Strict);
+        var acknowledgment = new TaskCompletionSource<Response>(TaskCreationOptions.RunContinuationsAsynchronously);
+        first.Setup(connection => connection.SendRecv(It.Is<Request>(request => request.ExecuteUnparameterizedStatementRequest != null)))
+            .Returns(acknowledgment.Task);
+        first.Setup(connection => connection.SendRecv(It.Is<Request>(request => request.CloseStatementRequest != null)))
+            .ReturnsAsync(Closed());
+        first.Setup(connection => connection.Receive(8)).ReturnsAsync(fail
+            ? new Response { Last = true, ErrorResponse = new ErrorResponse { Message = "Invalid Cypher" } }
+            : Result(new StatementResult { Scalar = 1 }));
+        var command = new PolyphenyCommand().WithConnection(first.Object).WithCommandText("CREATE (:Person)");
+        var executing = command.ExecuteCypherAsync("patients");
+        command.WithConnection(other.Object).WithCommandText("MATCH (n) RETURN n");
+        acknowledgment.SetResult(Acknowledgment());
+        if (fail)
+        {
+            var error = Assert.ThrowsAsync<InvalidOperationException>(async () => await executing);
+            Assert.That(error!.Message, Is.EqualTo("Invalid Cypher"));
+        }
+        else
+        {
+            await using var result = await executing;
+            Assert.That(result.RowsAffected, Is.EqualTo(1));
+        }
+        first.Verify(connection => connection.Receive(8), Times.Once);
+        first.Verify(connection => connection.SendRecv(It.Is<Request>(request => request.CloseStatementRequest != null)), Times.Once);
+        other.VerifyNoOtherCalls();
+    }
+
+    [Test]
+    public async Task ConcurrentFetchAndDisposalSerializeTheResultRequests()
+    {
+        var mock = new Mock<IPolyphenyConnection>(MockBehavior.Strict);
+        var page = new TaskCompletionSource<Response>(TaskCreationOptions.RunContinuationsAsynchronously);
+        mock.SetupSequence(connection => connection.SendRecv(It.IsAny<Request>()))
+            .ReturnsAsync(Acknowledgment()).Returns(page.Task).ReturnsAsync(Closed());
+        mock.Setup(connection => connection.Receive(8)).ReturnsAsync(Result(new StatementResult
+        {
+            Frame = new Frame { IsLast = false, GraphFrame = new GraphFrame() }
+        }));
+        var result = await new PolyphenyCommand().WithConnection(mock.Object).WithCommandText("MATCH (n) RETURN n")
+            .ExecuteCypherAsync("patients");
+        var fetching = result.FetchNextAsync();
+        var secondFetch = result.FetchNextAsync();
+        var disposing = result.DisposeAsync().AsTask();
+        Assert.That(disposing.IsCompleted, Is.False);
+        mock.Verify(connection => connection.SendRecv(It.Is<Request>(request => request.CloseStatementRequest != null)), Times.Never);
+        page.SetResult(new Response { Last = true, Frame = new Frame { IsLast = true, GraphFrame = new GraphFrame() } });
+        Assert.That(await fetching, Is.True);
+        Assert.That(await secondFetch, Is.False);
+        await disposing;
+        await result.DisposeAsync();
+        Assert.That(result.IsClosed, Is.True);
+        mock.Verify(connection => connection.SendRecv(It.Is<Request>(request => request.FetchRequest != null)), Times.Once);
+        mock.Verify(connection => connection.SendRecv(It.Is<Request>(request => request.CloseStatementRequest != null)), Times.Once);
+    }
+
     [TestCase("123456789012345678901234567890123456789", 30, "123456789012345678901234567890123456789E-30")]
     [TestCase("-129", 2, "-129E-2")]
     [TestCase("128", -2, "128E2")]
@@ -325,6 +416,59 @@ public class CypherTests
         Assert.Throws<InvalidDataException>(() => result.FetchNext());
     }
 
+    [TestCase("id")]
+    [TestCase("last")]
+    [TestCase("statement")]
+    [TestCase("width")]
+    public void MalformedInitialResponseClosesItsAcknowledgedStatement(string defect)
+    {
+        var mock = new Mock<IPolyphenyConnection>();
+        mock.SetupSequence(connection => connection.SendRecv(It.IsAny<Request>())).ReturnsAsync(Acknowledgment()).ReturnsAsync(Closed());
+        var response = Result(new StatementResult { Frame = RowFrame(true, Node("alice", "Alice")) });
+        switch (defect)
+        {
+            case "id":
+                response.Id = 99;
+                break;
+            case "last":
+                response.Last = false;
+                break;
+            case "statement":
+                response.StatementResponse.StatementId = 99;
+                break;
+            case "width":
+                response.StatementResponse.Result.Frame.RelationalFrame.Rows[0].Values.Clear();
+                break;
+        }
+        mock.Setup(connection => connection.Receive(8)).ReturnsAsync(response);
+        var error = Assert.Catch(() =>
+            new PolyphenyCommand().WithConnection(mock.Object).WithCommandText("MATCH (n) RETURN n,n.name").ExecuteCypher("patients"));
+        Assert.That(error, Is.TypeOf<InvalidOperationException>().Or.TypeOf<InvalidDataException>());
+        mock.Verify(connection => connection.SendRecv(It.Is<Request>(request => request.CloseStatementRequest != null)), Times.Once);
+    }
+
+    [TestCase("id")]
+    [TestCase("last")]
+    [TestCase("frame")]
+    public void MalformedFetchResponseClosesTheCursor(string defect)
+    {
+        var response = new Response { Last = true, Frame = new Frame { IsLast = true, GraphFrame = new GraphFrame() } };
+        if (defect == "id") response.Id = 99;
+        if (defect == "last") response.Last = false;
+        if (defect == "frame") response.Frame = null;
+        var mock = new Mock<IPolyphenyConnection>();
+        mock.SetupSequence(connection => connection.SendRecv(It.IsAny<Request>()))
+            .ReturnsAsync(Acknowledgment()).ReturnsAsync(response).ReturnsAsync(Closed());
+        mock.Setup(connection => connection.Receive(8)).ReturnsAsync(Result(new StatementResult
+        {
+            Frame = new Frame { IsLast = false, GraphFrame = new GraphFrame() }
+        }));
+        using var result = new PolyphenyCommand().WithConnection(mock.Object).WithCommandText("MATCH (n) RETURN n").ExecuteCypher("patients");
+        Assert.Throws<InvalidDataException>(() => result.FetchNext());
+        Assert.That(result.IsClosed, Is.True);
+        mock.Verify(connection => connection.SendRecv(It.Is<Request>(request => request.CloseStatementRequest != null)), Times.Once);
+    }
+
     [Test]
     public void ValidatesNamespaceFetchSizeStatementAndParametersBeforeSending()
     {
@@ -337,14 +481,16 @@ public class CypherTests
         Assert.Throws<InvalidOperationException>(() => command.ExecuteCypher("patients"));
         command.WithCommandText("RETURN ?").WithParameterValues(new object[] { "value" });
         Assert.Throws<NotSupportedException>(() => command.ExecuteCypher("patients"));
+        command.WithParameterValues(Array.Empty<object>());
+        command.Parameters.Add(new PolyphenyParameter { ParameterName = "value", Value = 1 });
+        Assert.Throws<NotSupportedException>(() => command.ExecuteCypher("patients"));
         Assert.Throws<InvalidOperationException>(() => new PolyphenyCommand().WithCommandText("RETURN 1").ExecuteCypher("patients"));
         mock.VerifyNoOtherCalls();
     }
 
-    private static Response Acknowledgment() => new() { Id = 11, StatementResponse = new StatementResponse { StatementId = 7 } };
+    private static Response Acknowledgment() => new() { StatementResponse = new StatementResponse { StatementId = 7 } };
     private static Response Result(StatementResult result) => new()
     {
-        Id = 11,
         Last = true,
         StatementResponse = new StatementResponse { StatementId = 7, Result = result }
     };

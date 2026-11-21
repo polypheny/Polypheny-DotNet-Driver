@@ -75,6 +75,30 @@ namespace PolyphenyDotNetDriver
             {
                 return val.String.String;
             }
+            if (val.Binary != null)
+            {
+                return val.Binary.Binary.ToByteArray();
+            }
+            if (val.File != null)
+            {
+                return val.File.Binary.ToByteArray();
+            }
+            if (val.Date != null)
+            {
+                return DateTime.UnixEpoch.AddDays(val.Date.Date);
+            }
+            if (val.Time != null)
+            {
+                return TimeSpan.FromMilliseconds(val.Time.Time);
+            }
+            if (val.Timestamp != null)
+            {
+                return DateTimeOffset.FromUnixTimeMilliseconds(val.Timestamp.Timestamp).UtcDateTime;
+            }
+            if (val.Interval != null)
+            {
+                return new PolyphenyInterval(val.Interval.Months, val.Interval.Milliseconds);
+            }
             if (val.Null != null)
             {
                 return null;
@@ -104,7 +128,7 @@ namespace PolyphenyDotNetDriver
                 return new GraphValue(val.Graph);
             }
 
-            throw new Exception("Failed to convert ProtoValue. This is likely a bug.");
+            throw new NotSupportedException("The Prism value has no supported value case.");
         }
 
         internal static Dictionary<object, object> FromProtoDocument(ProtoDocument document)

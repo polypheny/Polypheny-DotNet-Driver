@@ -16,8 +16,11 @@
 
 using System;
 using System.Collections.Generic;
+using System.Data;
+using System.Data.Common;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Polypheny.Prism;
 using PolyphenyDotNetDriver.Interface;
@@ -38,6 +41,8 @@ public sealed class PolyphenyCypherResult : IDisposable, IAsyncDisposable
     private readonly IPolyphenyConnection _connection;
     private readonly int _statementId;
     private readonly int _fetchSize;
+    private readonly long? _sessionVersion;
+    private readonly SemaphoreSlim _operation = new(1, 1);
 
     public CypherResultKind Kind { get; }
     public long? RowsAffected { get; }
@@ -47,11 +52,12 @@ public sealed class PolyphenyCypherResult : IDisposable, IAsyncDisposable
     public IReadOnlyList<IReadOnlyList<object>> Rows { get; private set; } = Array.Empty<IReadOnlyList<object>>();
     public IReadOnlyList<GraphElement> Elements { get; private set; } = Array.Empty<GraphElement>();
 
-    internal PolyphenyCypherResult(IPolyphenyConnection connection, int statementId, int fetchSize, StatementResult result)
+    internal PolyphenyCypherResult(IPolyphenyConnection connection, int statementId, int fetchSize, StatementResult result, long? sessionVersion)
     {
         _connection = connection;
         _statementId = statementId;
         _fetchSize = fetchSize;
+        _sessionVersion = sessionVersion;
         if (result == null)
         {
             throw new InvalidDataException("The Cypher response has no result.");
@@ -79,18 +85,28 @@ public sealed class PolyphenyCypherResult : IDisposable, IAsyncDisposable
 
     public async Task<bool> FetchNextAsync()
     {
-        if (IsClosed || IsLast)
-        {
-            return false;
-        }
+        await _operation.WaitAsync().ConfigureAwait(false);
         try
         {
-            var response = await _connection.SendRecv(new Request
+            if (IsClosed || IsLast)
+            {
+                return false;
+            }
+            if (!IsCurrentSession(_connection, _sessionVersion))
+            {
+                throw new InvalidOperationException("The connection session that owns this Cypher result has ended.");
+            }
+            var request = new Request
             {
                 FetchRequest = new FetchRequest { StatementId = _statementId, FetchSize = _fetchSize }
-            }).ConfigureAwait(false);
+            };
+            var response = await _connection.SendRecv(request).ConfigureAwait(false);
+            if (!IsCurrentSession(_connection, _sessionVersion))
+            {
+                throw new InvalidOperationException("The connection session that owns this Cypher result has ended.");
+            }
             ThrowIfError(response);
-            if (response.Frame == null || !response.Last)
+            if (response.Id != request.Id || response.Frame == null || !response.Last)
             {
                 throw new InvalidDataException("Expected the final response to a Cypher fetch request.");
             }
@@ -102,6 +118,10 @@ public sealed class PolyphenyCypherResult : IDisposable, IAsyncDisposable
             await CloseAfterError().ConfigureAwait(false);
             throw;
         }
+        finally
+        {
+            _operation.Release();
+        }
     }
 
     private void ApplyFrame(Frame frame)
@@ -109,6 +129,10 @@ public sealed class PolyphenyCypherResult : IDisposable, IAsyncDisposable
         switch (Kind)
         {
             case CypherResultKind.Rows when frame.RelationalFrame != null:
+                if (frame.RelationalFrame.Rows.Any(row => row.Values.Count != frame.RelationalFrame.ColumnMeta.Count))
+                {
+                    throw new InvalidDataException("A Cypher row does not match its column metadata.");
+                }
                 Columns = Array.AsReadOnly(frame.RelationalFrame.ColumnMeta.Select(column => column.Clone()).ToArray());
                 Rows = Array.AsReadOnly(frame.RelationalFrame.Rows
                     .Select(row => (IReadOnlyList<object>)Array.AsReadOnly(row.Values.Select(ProtoHelper.FromProtoValue).ToArray()))
@@ -132,27 +156,46 @@ public sealed class PolyphenyCypherResult : IDisposable, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        await _operation.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await CloseStatement().ConfigureAwait(false);
+        }
+        finally
+        {
+            _operation.Release();
+        }
+    }
+
+    private async Task CloseStatement()
+    {
         if (IsClosed)
         {
             return;
         }
         IsClosed = true;
-        var response = await _connection.SendRecv(new Request
+        if (!IsCurrentSession(_connection, _sessionVersion)
+            || _connection is DbConnection connection && connection.State == ConnectionState.Closed)
+        {
+            return;
+        }
+        var request = new Request
         {
             CloseStatementRequest = new CloseStatementRequest { StatementId = _statementId }
-        }).ConfigureAwait(false);
+        };
+        var response = await _connection.SendRecv(request).ConfigureAwait(false);
         ThrowIfError(response);
-        if (response.CloseStatementResponse == null || !response.Last)
+        if (response.Id != request.Id || response.CloseStatementResponse == null || !response.Last)
         {
             throw new InvalidDataException("Expected a statement-close response.");
         }
     }
 
-    internal async Task CloseAfterError()
+    private async Task CloseAfterError()
     {
         try
         {
-            await DisposeAsync().ConfigureAwait(false);
+            await CloseStatement().ConfigureAwait(false);
         }
         catch
         {
@@ -171,4 +214,8 @@ public sealed class PolyphenyCypherResult : IDisposable, IAsyncDisposable
             throw new InvalidOperationException(response.ErrorResponse.Message);
         }
     }
+
+    internal static bool IsCurrentSession(IPolyphenyConnection connection, long? version)
+        => connection is not PolyphenyConnection physical
+            || physical.State == ConnectionState.Open && physical.SessionVersion == version;
 }

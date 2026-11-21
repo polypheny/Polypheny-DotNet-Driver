@@ -133,12 +133,18 @@ Standalone paths and whole-graph queries use the flat graph stream, where path b
 Exact decimal values, including Cypher numeric literals, are represented by `PolyphenyDecimal`.
 Its `UnscaledValue` and `Scale` preserve the value as `UnscaledValue * 10^(-Scale)`.
 `ToString()` uses an exact base-10 exponent representation.
+Binary and file values decode to byte arrays. Dates and timestamps are UTC `DateTime` values,
+times are `TimeSpan` values, and `PolyphenyInterval` preserves the separate `Months` and
+`Milliseconds` components of an interval.
 
 Inspect `Kind` to distinguish `Graph`, `Rows` and `Scalar` results.
 `RowsAffected` is populated for scalar command acknowledgments.
 Cypher statements producing relational results, including update-count rows, expose those values through `Rows`.
 Dispose every result to close its server statement, including partially fetched results.
 The connection can then execute another query.
+Run one operation at a time on a connection. Fetching and disposing the same result are serialized
+so disposal waits for its pending page response.
+Results belong to the session that created them. Reopening a connection does not reactivate old results.
 
 Connections use manual transactions by default. Use `connection.BeginTransaction().Commit()` or `Rollback()`
 for graph writes. For autocommit, construct a connection with `new PolyphenyConfig { AutoCommit = true }`.

@@ -201,7 +201,7 @@ namespace PolyphenyDotNetDriver
         
         private bool _isPrepared = false;
         private int? _statementId = null;
-        private PolyphenyParameterCollection _parameterCollection;
+        private PolyphenyParameterCollection _parameterCollection = new();
         protected override DbConnection DbConnection { get; set; }
         protected override DbParameterCollection DbParameterCollection => this._parameterCollection;
         protected override DbTransaction DbTransaction { get; set; }
@@ -216,15 +216,22 @@ namespace PolyphenyDotNetDriver
 
         public async Task<PolyphenyCypherResult> ExecuteCypherAsync(string namespaceName, int fetchSize = 100)
         {
-            if (connection == null)
+            var executionConnection = connection;
+            var statement = CommandText;
+            if (executionConnection == null)
             {
                 throw new InvalidOperationException("Connection property must be non-null.");
+            }
+            var sessionVersion = (executionConnection as PolyphenyConnection)?.SessionVersion;
+            if (!PolyphenyCypherResult.IsCurrentSession(executionConnection, sessionVersion))
+            {
+                throw new InvalidOperationException("Open the connection before executing Cypher.");
             }
             if (string.IsNullOrWhiteSpace(namespaceName))
             {
                 throw new ArgumentException("A graph namespace is required.", nameof(namespaceName));
             }
-            if (string.IsNullOrWhiteSpace(CommandText))
+            if (string.IsNullOrWhiteSpace(statement))
             {
                 throw new InvalidOperationException("A Cypher statement is required.");
             }
@@ -232,7 +239,7 @@ namespace PolyphenyDotNetDriver
             {
                 throw new ArgumentOutOfRangeException(nameof(fetchSize), "The fetch size must be positive.");
             }
-            if (_isPrepared || ParameterValues?.Length > 0)
+            if (_isPrepared || ParameterValues?.Length > 0 || _parameterCollection.Count > 0)
             {
                 throw new NotSupportedException("Prism does not support prepared Cypher statements or parameters.");
             }
@@ -240,18 +247,23 @@ namespace PolyphenyDotNetDriver
             int? statementId = null;
             try
             {
-                var acknowledgment = await connection.SendRecv(new Request
+                var request = new Request
                 {
                     ExecuteUnparameterizedStatementRequest = new ExecuteUnparameterizedStatementRequest
                     {
                         LanguageName = "cypher",
-                        Statement = CommandText,
+                        Statement = statement,
                         NamespaceName = namespaceName,
                         FetchSize = fetchSize
                     }
-                }).ConfigureAwait(false);
+                };
+                var acknowledgment = await executionConnection.SendRecv(request).ConfigureAwait(false);
+                if (!PolyphenyCypherResult.IsCurrentSession(executionConnection, sessionVersion))
+                {
+                    throw new InvalidOperationException("The connection session ended during Cypher execution.");
+                }
                 PolyphenyCypherResult.ThrowIfError(acknowledgment);
-                if (acknowledgment.StatementResponse == null)
+                if (acknowledgment.Id != request.Id || acknowledgment.StatementResponse == null)
                 {
                     throw new InvalidOperationException("Expected a Cypher statement acknowledgment.");
                 }
@@ -261,22 +273,26 @@ namespace PolyphenyDotNetDriver
                     throw new InvalidOperationException("Expected an intermediate Cypher statement acknowledgment.");
                 }
 
-                var response = await connection.Receive().ConfigureAwait(false);
+                var response = await executionConnection.Receive().ConfigureAwait(false);
+                if (!PolyphenyCypherResult.IsCurrentSession(executionConnection, sessionVersion))
+                {
+                    throw new InvalidOperationException("The connection session ended during Cypher execution.");
+                }
                 PolyphenyCypherResult.ThrowIfError(response);
                 if (response.Id != acknowledgment.Id || !response.Last
                     || response.StatementResponse?.StatementId != statementId)
                 {
                     throw new InvalidOperationException("The Cypher result does not match its statement acknowledgment.");
                 }
-                return new PolyphenyCypherResult(connection, statementId.Value, fetchSize, response.StatementResponse.Result);
+                return new PolyphenyCypherResult(executionConnection, statementId.Value, fetchSize, response.StatementResponse.Result, sessionVersion);
             }
             catch
             {
-                if (statementId.HasValue)
+                if (statementId.HasValue && PolyphenyCypherResult.IsCurrentSession(executionConnection, sessionVersion))
                 {
                     try
                     {
-                        await connection.SendRecv(new Request
+                        await executionConnection.SendRecv(new Request
                         {
                             CloseStatementRequest = new CloseStatementRequest { StatementId = statementId.Value }
                         }).ConfigureAwait(false);

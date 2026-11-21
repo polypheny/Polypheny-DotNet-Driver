@@ -146,12 +146,159 @@ public class PrismConnectionTests
         await server;
     }
 
+    [Test]
+    public async Task CypherResultCanBeDisposedAfterItsConnection()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var server = RunServer(listener, 3, true, async (stream, cancellationToken) =>
+        {
+            var execute = await ReadRequest(stream, cancellationToken);
+            await WriteResponse(stream, new Response
+            {
+                Id = execute.Id, StatementResponse = new StatementResponse { StatementId = 7 }
+            }, cancellationToken);
+            await WriteResponse(stream, new Response
+            {
+                Id = execute.Id, Last = true,
+                StatementResponse = new StatementResponse
+                {
+                    StatementId = 7,
+                    Result = new StatementResult { Frame = new Frame { IsLast = false, GraphFrame = new GraphFrame() } }
+                }
+            }, cancellationToken);
+            Assert.That(await stream.ReadAsync(new byte[1], cancellationToken), Is.Zero);
+        }, timeout.Token, expectDisconnect: false);
+
+        using var connection = OpenableConnection(listener);
+        await connection.OpenAsync(timeout.Token);
+        var result = await new PolyphenyCommand().WithConnection(connection).WithCommandText("MATCH (n) RETURN n")
+            .ExecuteCypherAsync("patients", 1);
+        connection.Dispose();
+        await result.DisposeAsync();
+        Assert.That(result.IsClosed, Is.True);
+        Assert.That(connection.State, Is.EqualTo(ConnectionState.Closed));
+        await server;
+    }
+
+    [Test]
+    public async Task TruncatedCypherPageRetainsTheTransportFailureAndClosesTheResult()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var server = RunServer(listener, 3, true, async (stream, cancellationToken) =>
+        {
+            var execute = await ReadRequest(stream, cancellationToken);
+            await WriteResponse(stream, new Response
+            {
+                Id = execute.Id, StatementResponse = new StatementResponse { StatementId = 7 }
+            }, cancellationToken);
+            await WriteResponse(stream, new Response
+            {
+                Id = execute.Id, Last = true,
+                StatementResponse = new StatementResponse
+                {
+                    StatementId = 7,
+                    Result = new StatementResult { Frame = new Frame { IsLast = false, GraphFrame = new GraphFrame() } }
+                }
+            }, cancellationToken);
+            var fetch = await ReadRequest(stream, cancellationToken);
+            Assert.That(fetch.FetchRequest.StatementId, Is.EqualTo(7));
+            var header = new byte[8];
+            BinaryPrimitives.WriteUInt64LittleEndian(header, 100);
+            await stream.WriteAsync(header, cancellationToken);
+            await stream.WriteAsync(new byte[3], cancellationToken);
+        }, timeout.Token, expectDisconnect: false);
+
+        using var connection = OpenableConnection(listener);
+        await connection.OpenAsync(timeout.Token);
+        await using var result = await new PolyphenyCommand().WithConnection(connection).WithCommandText("MATCH (n) RETURN n")
+            .ExecuteCypherAsync("patients", 1);
+        Assert.ThrowsAsync<EndOfStreamException>(() => result.FetchNextAsync());
+        Assert.That(result.IsClosed, Is.True);
+        Assert.That(connection.State, Is.EqualTo(ConnectionState.Closed));
+        await server;
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task OldResultCannotUseAReopenedConnectionSession(bool attemptFetch)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var firstSession = RunServer(listener, 3, true, async (stream, cancellationToken) =>
+        {
+            var execute = await ReadRequest(stream, cancellationToken);
+            await WriteResponse(stream, new Response
+            {
+                Id = execute.Id, StatementResponse = new StatementResponse { StatementId = 7 }
+            }, cancellationToken);
+            await WriteResponse(stream, new Response
+            {
+                Id = execute.Id, Last = true,
+                StatementResponse = new StatementResponse
+                {
+                    StatementId = 7,
+                    Result = new StatementResult { Frame = new Frame { IsLast = false, GraphFrame = new GraphFrame() } }
+                }
+            }, cancellationToken);
+        }, timeout.Token);
+
+        using var connection = OpenableConnection(listener);
+        await connection.OpenAsync(timeout.Token);
+        var command = new PolyphenyCommand().WithConnection(connection).WithCommandText("MATCH (n) RETURN n");
+        var oldResult = await command.ExecuteCypherAsync("patients", 1);
+        await connection.CloseAsync();
+        await firstSession;
+
+        var secondSession = RunServer(listener, 3, true, async (stream, cancellationToken) =>
+        {
+            var execute = await ReadRequest(stream, cancellationToken);
+            Assert.That(execute.ExecuteUnparameterizedStatementRequest, Is.Not.Null);
+            await WriteResponse(stream, new Response
+            {
+                Id = execute.Id, StatementResponse = new StatementResponse { StatementId = 7 }
+            }, cancellationToken);
+            await WriteResponse(stream, new Response
+            {
+                Id = execute.Id, Last = true,
+                StatementResponse = new StatementResponse
+                {
+                    StatementId = 7,
+                    Result = new StatementResult { Frame = new Frame { IsLast = true, GraphFrame = new GraphFrame() } }
+                }
+            }, cancellationToken);
+            var close = await ReadRequest(stream, cancellationToken);
+            Assert.That(close.CloseStatementRequest.StatementId, Is.EqualTo(7));
+            await WriteResponse(stream, new Response { Id = close.Id, Last = true, CloseStatementResponse = new CloseStatementResponse() },
+                cancellationToken);
+        }, timeout.Token);
+
+        await connection.OpenAsync(timeout.Token);
+        if (attemptFetch)
+        {
+            var error = Assert.ThrowsAsync<InvalidOperationException>(() => oldResult.FetchNextAsync());
+            Assert.That(error!.Message, Does.Contain("session"));
+        }
+        await oldResult.DisposeAsync();
+        Assert.That(oldResult.IsClosed, Is.True);
+        await using (var current = await command.ExecuteCypherAsync("patients", 1))
+        {
+            Assert.That(current.IsLast, Is.True);
+        }
+        await connection.CloseAsync();
+        await secondSession;
+    }
+
     private static PolyphenyConnection OpenableConnection(TcpListener listener)
         => PolyphenyDriver.OpenConnection($"127.0.0.1:{((IPEndPoint)listener.LocalEndpoint).Port},pa:");
 
     private static async Task RunServer(
         TcpListener listener, int serverMinor, bool compatible, Func<NetworkStream, CancellationToken, Task>? exchange,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool expectDisconnect = true)
     {
         using var client = await listener.AcceptTcpClientAsync(cancellationToken);
         client.NoDelay = true;
@@ -187,6 +334,10 @@ public class PrismConnectionTests
         }
 
         await exchange!(stream, cancellationToken);
+        if (!expectDisconnect)
+        {
+            return;
+        }
         var disconnect = await ReadRequest(stream, cancellationToken);
         Assert.That(disconnect.DisconnectRequest, Is.Not.Null);
         await WriteResponse(stream, new Response { Id = disconnect.Id, Last = true, DisconnectResponse = new DisconnectResponse() },
