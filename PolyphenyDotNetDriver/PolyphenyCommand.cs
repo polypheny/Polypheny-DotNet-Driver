@@ -208,6 +208,88 @@ namespace PolyphenyDotNetDriver
         public override bool DesignTimeVisible { get; set; }
         public object[] ParameterValues { get; private set; }
 
+        /// <summary>Executes one Cypher statement and returns its first result page.</summary>
+        /// <param name="namespaceName">The graph namespace.</param>
+        /// <param name="fetchSize">The maximum source rows per page. One row may contain multiple graph elements.</param>
+        public PolyphenyCypherResult ExecuteCypher(string namespaceName, int fetchSize = 100)
+            => ExecuteCypherAsync(namespaceName, fetchSize).GetAwaiter().GetResult();
+
+        public async Task<PolyphenyCypherResult> ExecuteCypherAsync(string namespaceName, int fetchSize = 100)
+        {
+            if (connection == null)
+            {
+                throw new InvalidOperationException("Connection property must be non-null.");
+            }
+            if (string.IsNullOrWhiteSpace(namespaceName))
+            {
+                throw new ArgumentException("A graph namespace is required.", nameof(namespaceName));
+            }
+            if (string.IsNullOrWhiteSpace(CommandText))
+            {
+                throw new InvalidOperationException("A Cypher statement is required.");
+            }
+            if (fetchSize < 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(fetchSize), "The fetch size must be positive.");
+            }
+            if (_isPrepared || ParameterValues?.Length > 0)
+            {
+                throw new NotSupportedException("Prism does not support prepared Cypher statements or parameters.");
+            }
+
+            int? statementId = null;
+            try
+            {
+                var acknowledgment = await connection.SendRecv(new Request
+                {
+                    ExecuteUnparameterizedStatementRequest = new ExecuteUnparameterizedStatementRequest
+                    {
+                        LanguageName = "cypher",
+                        Statement = CommandText,
+                        NamespaceName = namespaceName,
+                        FetchSize = fetchSize
+                    }
+                }).ConfigureAwait(false);
+                PolyphenyCypherResult.ThrowIfError(acknowledgment);
+                if (acknowledgment.StatementResponse == null)
+                {
+                    throw new InvalidOperationException("Expected a Cypher statement acknowledgment.");
+                }
+                statementId = acknowledgment.StatementResponse.StatementId;
+                if (acknowledgment.Last || acknowledgment.StatementResponse.Result != null)
+                {
+                    throw new InvalidOperationException("Expected an intermediate Cypher statement acknowledgment.");
+                }
+
+                var response = await connection.Receive().ConfigureAwait(false);
+                PolyphenyCypherResult.ThrowIfError(response);
+                if (response.Id != acknowledgment.Id || !response.Last
+                    || response.StatementResponse?.StatementId != statementId)
+                {
+                    throw new InvalidOperationException("The Cypher result does not match its statement acknowledgment.");
+                }
+                return new PolyphenyCypherResult(connection, statementId.Value, fetchSize, response.StatementResponse.Result);
+            }
+            catch
+            {
+                if (statementId.HasValue)
+                {
+                    try
+                    {
+                        await connection.SendRecv(new Request
+                        {
+                            CloseStatementRequest = new CloseStatementRequest { StatementId = statementId.Value }
+                        }).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // Preserve the execution error if cleanup also fails.
+                    }
+                }
+                throw;
+            }
+        }
+
         protected override DbParameter CreateDbParameter()
         {
             return new PolyphenyParameter();

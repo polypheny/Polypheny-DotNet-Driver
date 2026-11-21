@@ -17,6 +17,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using Polypheny.Prism;
 
 namespace PolyphenyDotNetDriver
@@ -66,9 +67,9 @@ namespace PolyphenyDotNetDriver
             }
             if (val.BigDecimal != null)
             {
-                // TODO: add support for big decimal
-                // seems like need external library
-                return null;
+                return new PolyphenyDecimal(
+                    new BigInteger(val.BigDecimal.UnscaledValue.Span, isUnsigned: false, isBigEndian: true),
+                    val.BigDecimal.Scale);
             }
             if (val.String != null)
             {
@@ -85,6 +86,22 @@ namespace PolyphenyDotNetDriver
             if (val.Document != null)
             {
                 return FromProtoDocument(val.Document);
+            }
+            if (val.Node != null)
+            {
+                return new GraphNode(val.Node);
+            }
+            if (val.Edge != null)
+            {
+                return new GraphEdge(val.Edge);
+            }
+            if (val.Path != null)
+            {
+                return new GraphPath(val.Path);
+            }
+            if (val.Graph != null)
+            {
+                return new GraphValue(val.Graph);
             }
 
             throw new Exception("Failed to convert ProtoValue. This is likely a bug.");

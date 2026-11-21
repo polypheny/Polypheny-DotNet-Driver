@@ -116,7 +116,7 @@ public class ProtoHelperTests
             123.45,
             "test",
             true,
-            null
+            new PolyphenyDecimal(0, 5)
         };
 
         for (var i = 0; i < input.Length; i++)

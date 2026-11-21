@@ -166,7 +166,7 @@ public class PrismConnectionTests
 
         var connect = await ReadRequest(stream, cancellationToken);
         Assert.That(connect.ConnectionRequest.MajorApiVersion, Is.EqualTo(2));
-        Assert.That(connect.ConnectionRequest.MinorApiVersion, Is.EqualTo(2));
+        Assert.That(connect.ConnectionRequest.MinorApiVersion, Is.EqualTo(3));
         await WriteResponse(stream, new Response
         {
             Id = connect.Id,

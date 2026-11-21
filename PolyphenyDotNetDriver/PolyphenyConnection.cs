@@ -87,6 +87,7 @@ namespace PolyphenyDotNetDriver
         public int IsConnected => this._isConnected;
 
         private string TransportVersion { get; }
+        private bool AutoCommit { get; }
 
         private string _hostname;
         private int _port;
@@ -101,6 +102,7 @@ namespace PolyphenyDotNetDriver
             Database = config.Database;
             DataSource = config.DataSource;
             TransportVersion = config.TransportVersion;
+            AutoCommit = config.AutoCommit;
             
             this._connectionString = connectionString;
             UpdateConnectionString();
@@ -178,7 +180,7 @@ namespace PolyphenyDotNetDriver
                         MinorApiVersion = Convert.ToInt32(Version.Minor),
                         Username = this._username,
                         Password = this._password,
-                        ConnectionProperties = new ConnectionProperties { IsAutoCommit = false }
+                        ConnectionProperties = new ConnectionProperties { IsAutoCommit = AutoCommit }
                     }
                 };
 
