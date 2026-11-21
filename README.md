@@ -15,7 +15,7 @@ Connect .NET applications to Polypheny-DB over the Prism query interface. The dr
 
 - The driver targets .NET 6. Use the .NET 8 SDK to run this repository's tests.
 - Connect to a Polypheny-DB server with a compatible Prism 2.x interface. Document collection metadata needs server support introduced in Prism 2.2. A Prism 1.x server requires an earlier driver.
-- Cypher support requires a server with the merged graph Prism implementation and Prism 2.3. The driver uses the published `Polypheny.Prism` 2.3.0 NuGet package.
+- Cypher queries require a server with Cypher enabled over Prism 2.3. The driver uses the published `Polypheny.Prism` 2.3.0 NuGet package.
 - Enable the Prism query interface on the server. The examples use its default TCP port `20590` and the local development credentials `pa` with an empty password.
 
 See the [Polypheny-DB setup instructions](https://github.com/polypheny/Polypheny-DB) to start a server.
