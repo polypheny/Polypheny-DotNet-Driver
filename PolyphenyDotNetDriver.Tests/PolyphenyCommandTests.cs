@@ -63,6 +63,35 @@ public class PolyphenyCommandTests
         });        
     }
 
+    [TestCase(true)]
+    [TestCase(false)]
+    public void ExecuteNonQueryAsync_WithStubErrorReportsPrismDetails(bool beforeAcknowledgment)
+    {
+        var response = new Response
+        {
+            Last = true,
+            ErrorResponse = new ErrorResponse
+            {
+                Message = "Statement rejected.",
+                Details = new ErrorDetails { State = "42000", ErrorCode = 73 }
+            }
+        };
+        var acknowledgment = new Response { StatementResponse = new StatementResponse { StatementId = 1 } };
+        _mockConnection.Setup(x => x.SendRecv(It.IsAny<Request>())).ReturnsAsync(beforeAcknowledgment ? response : acknowledgment);
+        _mockConnection.Setup(x => x.Receive(8)).ReturnsAsync(response);
+        using var command = new PolyphenyCommand().WithConnection(_mockConnection.Object).WithCommandText("bad statement");
+
+        var error = Assert.ThrowsAsync<PolyphenyException>(() => command.ExecuteNonQueryAsync(CancellationToken.None));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(error!.Message, Is.EqualTo("Statement rejected."));
+            Assert.That(error.SqlState, Is.EqualTo("42000"));
+            Assert.That(error.ServerErrorCode, Is.EqualTo(73));
+        });
+        _mockConnection.Verify(x => x.Receive(8), beforeAcknowledgment ? Times.Never() : Times.Once());
+    }
+
     [Test]
     public void ExecuteQueryMongo_WithNullConnection_ThrowsInvalidOperationException()
     {

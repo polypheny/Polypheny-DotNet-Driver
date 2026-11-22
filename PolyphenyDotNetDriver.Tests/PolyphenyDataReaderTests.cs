@@ -742,6 +742,35 @@ public class PolyphenyDataReaderTests
     }
 
     [Test]
+    public void ReadAsync_WithStubResultErrorReportsPrismDetails()
+    {
+        _mockCommand.Setup(x => x.CommandText).Returns("SELECT * FROM missing");
+        _mockCommand.Setup(x => x.SendRecv(It.IsAny<Request>())).ReturnsAsync(new Response
+        {
+            StatementResponse = new StatementResponse { StatementId = 1 }
+        });
+        _mockCommand.Setup(x => x.Receive(8)).ReturnsAsync(new Response
+        {
+            Last = true,
+            ErrorResponse = new ErrorResponse
+            {
+                Message = "Unknown table.",
+                Details = new ErrorDetails { State = "42P01" }
+            }
+        });
+        using var reader = new PolyphenyDataReader(_mockCommand.Object);
+
+        var error = Assert.ThrowsAsync<PolyphenyException>(() => reader.ReadAsync(CancellationToken.None));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(error!.Message, Is.EqualTo("Unknown table."));
+            Assert.That(error.SqlState, Is.EqualTo("42P01"));
+            Assert.That(error.ServerErrorCode, Is.Null);
+        });
+    }
+
+    [Test]
     public void PolyphenyDataReader_Read_WithMismatchStatementId_ThrowsException()
     {
         var response = new Response()

@@ -49,7 +49,8 @@ public class PolyphenyTransaction: DbTransaction
             CommitRequest = new CommitRequest()
         };
         
-        await PolyphenyConnection.SendRecv(request);
+        var response = await PolyphenyConnection.SendRecv(request).ConfigureAwait(false);
+        PrismResponse.ThrowIfError(response);
     }
 
     public override void Rollback() => RollbackAsync(CancellationToken.None).GetAwaiter().GetResult();
@@ -61,7 +62,8 @@ public class PolyphenyTransaction: DbTransaction
             RollbackRequest = new RollbackRequest()
         };
 
-        await PolyphenyConnection.SendRecv(request);
+        var response = await PolyphenyConnection.SendRecv(request).ConfigureAwait(false);
+        PrismResponse.ThrowIfError(response);
     }
 
     public readonly IPolyphenyConnection PolyphenyConnection;

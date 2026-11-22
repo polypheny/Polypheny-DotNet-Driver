@@ -124,7 +124,9 @@ namespace PolyphenyDotNetDriver
             {
                 if (State == ConnectionState.Open)
                 {
-                    await SendRecv(new Request { DisconnectRequest = new DisconnectRequest() }).ConfigureAwait(false);
+                    // Disconnect ends the session even when the server replies with an error.
+                    await Send(new Request { DisconnectRequest = new DisconnectRequest() }).ConfigureAwait(false);
+                    await ReceiveResponse(8, CancellationToken.None).ConfigureAwait(false);
                 }
             }
             finally
@@ -190,7 +192,7 @@ namespace PolyphenyDotNetDriver
                 var response = await SendRecv(request, cancellationToken).ConfigureAwait(false);
                 if (response.ConnectionResponse?.IsCompatible != true)
                 {
-                    throw new InvalidOperationException(response.ErrorResponse?.Message ?? "The Prism API version is incompatible with the server.");
+                    throw new InvalidOperationException("The Prism API version is incompatible with the server.");
                 }
                 Interlocked.Exchange(ref this._isConnected, PolyphenyConnectionState.StatusPolyphenyConnected);
             }
@@ -229,7 +231,7 @@ namespace PolyphenyDotNetDriver
 
             var response = await SendRecv(new Request { EntitiesRequest = request }).ConfigureAwait(false);
             return response.EntitiesResponse?.Entities
-                ?? throw new InvalidOperationException(response.ErrorResponse?.Message ?? "Expected a Prism entities response.");
+                ?? throw new InvalidOperationException("Expected a Prism entities response.");
         }
 
         public async Task Ping(CancellationToken cancellationToken = default)
@@ -362,16 +364,24 @@ namespace PolyphenyDotNetDriver
 
         public Task Send(Request req, int lengthSize=8) => RawSend(req.ToByteArray(), lengthSize);
         
-        // add default lengthSize
-        public async Task<Response> Receive(int lengthSize=8)
-            => Response.Parser.ParseFrom(await RawReceive(lengthSize).ConfigureAwait(false));
+        public Task<Response> Receive(int lengthSize=8) => Receive(lengthSize, CancellationToken.None);
+
+        private async Task<Response> Receive(int lengthSize, CancellationToken cancellationToken)
+        {
+            var response = await ReceiveResponse(lengthSize, cancellationToken).ConfigureAwait(false);
+            PrismResponse.ThrowIfError(response);
+            return response;
+        }
+
+        private async Task<Response> ReceiveResponse(int lengthSize, CancellationToken cancellationToken)
+            => Response.Parser.ParseFrom(await RawReceive(lengthSize, cancellationToken).ConfigureAwait(false));
 
         public Task<Response> SendRecv(Request m) => SendRecv(m, CancellationToken.None);
 
         private async Task<Response> SendRecv(Request request, CancellationToken cancellationToken)
         {
             await RawSend(request.ToByteArray(), 8, cancellationToken).ConfigureAwait(false);
-            return Response.Parser.ParseFrom(await RawReceive(8, cancellationToken).ConfigureAwait(false));
+            return await Receive(8, cancellationToken).ConfigureAwait(false);
         }
     }
 }
