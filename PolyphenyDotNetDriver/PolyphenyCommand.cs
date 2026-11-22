@@ -102,10 +102,10 @@ namespace PolyphenyDotNetDriver
                 }
             };
 
-            var response = await this.connection.SendRecv(request);
+            var response = await SendRecv(request);
             var tmpId = response?.StatementResponse?.StatementId;
 
-            var newResponse = await this.connection.Receive();
+            var newResponse = await Receive(8);
             if (newResponse?.StatementResponse?.StatementId != tmpId)
             {
                 throw new Exception("StatementId mismatch");
@@ -139,7 +139,7 @@ namespace PolyphenyDotNetDriver
                 }
             };
 
-            var response = await this.connection.SendRecv(request);
+            var response = await SendRecv(request);
             var statementResult = response?.StatementResult;
             var rowAffected = statementResult?.Scalar;
             
@@ -174,7 +174,7 @@ namespace PolyphenyDotNetDriver
                 }
             };
             
-            var response = await this.connection.SendRecv(request);
+            var response = await SendRecv(request);
             var parameterMetas = response?.PreparedStatementSignature?.ParameterMetas;
             var parameterCollections = PolyphenyParameterCollection.FromParameterMetas(parameterMetas);
             this._parameterCollection = parameterCollections;
@@ -182,14 +182,18 @@ namespace PolyphenyDotNetDriver
             this._isPrepared = true;
         }
 
-        public Task<Response> SendRecv(Request m)
+        public async Task<Response> SendRecv(Request m)
         {
-            return this.connection.SendRecv(m);
+            var response = await this.connection.SendRecv(m).ConfigureAwait(false);
+            PrismResponse.ThrowIfError(response);
+            return response;
         }
 
-        public Task<Response> Receive(int lengthSize)
+        public async Task<Response> Receive(int lengthSize)
         {
-            return this.connection.Receive(lengthSize);
+            var response = await this.connection.Receive(lengthSize).ConfigureAwait(false);
+            PrismResponse.ThrowIfError(response);
+            return response;
         }
 
         public override string CommandText { get; set; } = string.Empty;
@@ -262,7 +266,7 @@ namespace PolyphenyDotNetDriver
                 {
                     throw new InvalidOperationException("The connection session ended during Cypher execution.");
                 }
-                PolyphenyCypherResult.ThrowIfError(acknowledgment);
+                PolyphenyCypherResult.ValidateResponse(acknowledgment);
                 if (acknowledgment.Id != request.Id || acknowledgment.StatementResponse == null)
                 {
                     throw new InvalidOperationException("Expected a Cypher statement acknowledgment.");
@@ -278,7 +282,7 @@ namespace PolyphenyDotNetDriver
                 {
                     throw new InvalidOperationException("The connection session ended during Cypher execution.");
                 }
-                PolyphenyCypherResult.ThrowIfError(response);
+                PolyphenyCypherResult.ValidateResponse(response);
                 if (response.Id != acknowledgment.Id || !response.Last
                     || response.StatementResponse?.StatementId != statementId)
                 {
@@ -350,10 +354,10 @@ namespace PolyphenyDotNetDriver
             }
 
             var request = new Request { ExecuteUnparameterizedStatementRequest = execute };
-            var response = await this.connection.SendRecv(request).ConfigureAwait(false);
+            var response = await SendRecv(request).ConfigureAwait(false);
             var tmpId = response?.StatementResponse?.StatementId;
             
-            var newResponse = await this.connection.Receive().ConfigureAwait(false);
+            var newResponse = await Receive(8).ConfigureAwait(false);
             if (newResponse?.StatementResponse?.StatementId != tmpId)
             {
                 throw new Exception("StatementId mismatch");

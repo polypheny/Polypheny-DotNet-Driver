@@ -225,19 +225,21 @@ public class CypherIntegrationTests
         }
 
         command.WithCommandText("MATCH (n RETURN n");
-        Assert.ThrowsAsync<InvalidOperationException>(() => command.ExecuteCypherAsync(_namespace));
+        Assert.ThrowsAsync<PolyphenyException>(() => command.ExecuteCypherAsync(_namespace));
         command.WithCommandText("MATCH (n) RETURN n; MATCH (n) RETURN n");
-        var multiple = Assert.Throws<InvalidOperationException>(() => command.ExecuteCypher(_namespace));
+        var multiple = Assert.Throws<PolyphenyException>(() => command.ExecuteCypher(_namespace));
         Assert.That(multiple!.Message, Does.Contain("exactly one Cypher statement"));
-        foreach (var named in new[] { false, true })
+        var request = new Request
         {
-            var prepare = new PrepareStatementRequest { NamespaceName = _namespace, LanguageName = "cypher", Statement = "MATCH (n) RETURN n" };
-            var request = named
-                ? new Request { PrepareNamedStatementRequest = prepare }
-                : new Request { PrepareIndexedStatementRequest = prepare };
-            var rejected = await connection.SendRecv(request);
-            Assert.That(rejected.ErrorResponse.Message, Does.Contain("Prepared Cypher statements are not supported"));
-        }
+            PrepareIndexedStatementRequest = new PrepareStatementRequest
+            {
+                NamespaceName = _namespace,
+                LanguageName = "cypher",
+                Statement = "MATCH (n) RETURN n"
+            }
+        };
+        var rejected = Assert.ThrowsAsync<PolyphenyException>(() => connection.SendRecv(request));
+        Assert.That(rejected!.Message, Does.Contain("prepared Cypher statements are not supported").IgnoreCase);
         command.WithCommandText("MATCH (n:Person) RETURN count(n)");
         await using var recovered = await command.ExecuteCypherAsync(_namespace);
         Assert.That(Convert.ToInt64(recovered.Rows.Single().Single()), Is.EqualTo(3));

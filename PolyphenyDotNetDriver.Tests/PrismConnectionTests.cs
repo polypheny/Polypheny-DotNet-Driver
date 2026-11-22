@@ -16,6 +16,7 @@
 
 using System.Buffers.Binary;
 using System.Data;
+using System.Data.Common;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -106,28 +107,47 @@ public class PrismConnectionTests
         await server;
     }
 
-    [Test]
-    public async Task SearchEntities_UsesCompatibleOlderMinorAndReportsPrismError()
+    [TestCase(false, null, null)]
+    [TestCase(true, null, null)]
+    [TestCase(true, "XX000", null)]
+    [TestCase(true, null, 0)]
+    [TestCase(true, "42P01", 7)]
+    public async Task SearchEntities_ReportsPrismErrorWithOrWithoutDetails(bool hasDetails, string? state, int? serverCode)
     {
+        const string message = "  Metadata unavailable. (SQLSTATE 23505)\n";
+        var wireError = new ErrorResponse { Message = message };
+        if (hasDetails)
+        {
+            wireError.Details = new ErrorDetails { Message = "Different details message" };
+            if (state != null) wireError.Details.State = state;
+            if (serverCode.HasValue) wireError.Details.ErrorCode = serverCode.Value;
+        }
+
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
-        var server = RunServer(listener, 1, true, async (stream, cancellationToken) =>
+        var server = RunServer(listener, hasDetails ? 4 : 1, true, async (stream, cancellationToken) =>
         {
             var request = await ReadRequest(stream, cancellationToken);
+            Assert.That(request.EntitiesRequest.NamespaceName, Is.EqualTo("patients"));
             await WriteResponse(stream, new Response
             {
                 Id = request.Id,
                 Last = true,
-                ErrorResponse = new ErrorResponse { Message = "Document collection metadata is unavailable." }
+                ErrorResponse = wireError
             }, cancellationToken);
         }, timeout.Token);
 
         using var connection = OpenableConnection(listener);
         await connection.OpenAsync(timeout.Token);
         Assert.That(connection.State, Is.EqualTo(ConnectionState.Open));
-        var error = Assert.ThrowsAsync<InvalidOperationException>(() => connection.SearchEntitiesAsync("patients"));
-        Assert.That(error!.Message, Is.EqualTo("Document collection metadata is unavailable."));
+        var error = Assert.ThrowsAsync<PolyphenyException>(() => connection.SearchEntitiesAsync("patients"));
+        Assert.Multiple(() =>
+        {
+            Assert.That(error!.Message, Is.EqualTo(message));
+            Assert.That(((DbException)error).SqlState, Is.EqualTo(state));
+            Assert.That(error.ServerErrorCode, Is.EqualTo(serverCode));
+        });
         await connection.CloseAsync();
         await server;
     }
@@ -142,6 +162,129 @@ public class PrismConnectionTests
 
         using var connection = OpenableConnection(listener);
         Assert.ThrowsAsync<InvalidOperationException>(() => connection.OpenAsync(timeout.Token));
+        Assert.That(connection.State, Is.EqualTo(ConnectionState.Closed));
+        await server;
+    }
+
+    [Test]
+    public async Task Open_LoginErrorReportsPrismDetailsAndClosesTransport()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var server = RejectLogin();
+
+        using var connection = OpenableConnection(listener);
+        var error = Assert.ThrowsAsync<PolyphenyException>(() => connection.OpenAsync(timeout.Token));
+        Assert.Multiple(() =>
+        {
+            Assert.That(error!.Message, Is.EqualTo("Authentication failed."));
+            Assert.That(error.SqlState, Is.EqualTo("28000"));
+            Assert.That(connection.State, Is.EqualTo(ConnectionState.Closed));
+        });
+        await server;
+
+        async Task RejectLogin()
+        {
+            using var client = await listener.AcceptTcpClientAsync(timeout.Token);
+            using var stream = client.GetStream();
+            var connect = await ReadLoginRequest(stream, timeout.Token);
+            await WriteResponse(stream, new Response
+            {
+                Id = connect.Id,
+                Last = true,
+                ErrorResponse = new ErrorResponse
+                {
+                    Message = "Authentication failed.",
+                    Details = new ErrorDetails { State = "28000" }
+                }
+            }, timeout.Token);
+            Assert.That(await stream.ReadAsync(new byte[1], timeout.Token), Is.Zero);
+        }
+    }
+
+    [Test]
+    public async Task ExecuteNonQuery_ReportsErrorAfterAcknowledgmentAndSupportsRollback()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var server = RunServer(listener, 4, true, async (stream, cancellationToken) =>
+        {
+            var statement = await ReadRequest(stream, cancellationToken);
+            Assert.That(statement.ExecuteUnparameterizedStatementRequest.LanguageName, Is.EqualTo("sql"));
+            await WriteResponse(stream, new Response
+            {
+                Id = statement.Id,
+                StatementResponse = new StatementResponse { StatementId = 7 }
+            }, cancellationToken);
+            await WriteResponse(stream, new Response
+            {
+                Id = statement.Id,
+                Last = true,
+                ErrorResponse = new ErrorResponse
+                {
+                    Message = "Duplicate key.",
+                    Details = new ErrorDetails { State = "23505", ErrorCode = 0 }
+                }
+            }, cancellationToken);
+
+            var rollback = await ReadRequest(stream, cancellationToken);
+            Assert.That(rollback.RollbackRequest, Is.Not.Null);
+            await WriteResponse(stream, new Response
+            {
+                Id = rollback.Id, Last = true, RollbackResponse = new RollbackResponse()
+            }, cancellationToken);
+
+            var ping = await ReadRequest(stream, cancellationToken);
+            Assert.That(ping.ConnectionCheckRequest, Is.Not.Null);
+            await WriteResponse(stream, new Response
+            {
+                Id = ping.Id, Last = true, ConnectionCheckResponse = new ConnectionCheckResponse()
+            }, cancellationToken);
+        }, timeout.Token);
+
+        using var connection = OpenableConnection(listener);
+        await connection.OpenAsync(timeout.Token);
+        using var transaction = connection.BeginTransaction();
+        using var command = connection.CreateCommand();
+        command.CommandText = "INSERT INTO patients VALUES (1)";
+        var error = Assert.Throws<PolyphenyException>(() => command.ExecuteNonQuery());
+        Assert.Multiple(() =>
+        {
+            Assert.That(error!.Message, Is.EqualTo("Duplicate key."));
+            Assert.That(error.SqlState, Is.EqualTo("23505"));
+            Assert.That(error.ServerErrorCode, Is.Zero);
+            Assert.That(connection.State, Is.EqualTo(ConnectionState.Open));
+        });
+        await transaction.RollbackAsync(timeout.Token);
+        await connection.Ping(timeout.Token);
+        await connection.CloseAsync();
+        await server;
+    }
+
+    [Test]
+    public async Task Close_ClosesTransportEvenWhenDisconnectReportsAServerError()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var server = RunServer(listener, 4, true, async (stream, cancellationToken) =>
+        {
+            var disconnect = await ReadRequest(stream, cancellationToken);
+            Assert.That(disconnect.DisconnectRequest, Is.Not.Null);
+            await WriteResponse(stream, new Response
+            {
+                Id = disconnect.Id,
+                Last = true,
+                ErrorResponse = new ErrorResponse { Message = "Session already closed." }
+            }, cancellationToken);
+            Assert.That(await stream.ReadAsync(new byte[1], cancellationToken), Is.Zero);
+        }, timeout.Token, expectDisconnect: false);
+
+        using var connection = OpenableConnection(listener);
+        await connection.OpenAsync(timeout.Token);
+        connection.Close();
         Assert.That(connection.State, Is.EqualTo(ConnectionState.Closed));
         await server;
     }
@@ -303,17 +446,7 @@ public class PrismConnectionTests
         using var client = await listener.AcceptTcpClientAsync(cancellationToken);
         client.NoDelay = true;
         using var stream = client.GetStream();
-        var transport = Encoding.ASCII.GetBytes("plain-v1@polypheny.com\n");
-        await stream.WriteAsync(new[] { (byte)transport.Length }, cancellationToken);
-        await stream.WriteAsync(transport, cancellationToken);
-        var handshake = new byte[transport.Length + 1];
-        await stream.ReadExactlyAsync(handshake, cancellationToken);
-        Assert.That(handshake[0], Is.EqualTo(transport.Length));
-        Assert.That(handshake.Skip(1), Is.EqualTo(transport));
-
-        var connect = await ReadRequest(stream, cancellationToken);
-        Assert.That(connect.ConnectionRequest.MajorApiVersion, Is.EqualTo(2));
-        Assert.That(connect.ConnectionRequest.MinorApiVersion, Is.EqualTo(3));
+        var connect = await ReadLoginRequest(stream, cancellationToken);
         await WriteResponse(stream, new Response
         {
             Id = connect.Id,
@@ -342,6 +475,22 @@ public class PrismConnectionTests
         Assert.That(disconnect.DisconnectRequest, Is.Not.Null);
         await WriteResponse(stream, new Response { Id = disconnect.Id, Last = true, DisconnectResponse = new DisconnectResponse() },
             cancellationToken);
+    }
+
+    private static async Task<Request> ReadLoginRequest(NetworkStream stream, CancellationToken cancellationToken)
+    {
+        var transport = Encoding.ASCII.GetBytes("plain-v1@polypheny.com\n");
+        await stream.WriteAsync(new[] { (byte)transport.Length }, cancellationToken);
+        await stream.WriteAsync(transport, cancellationToken);
+        var handshake = new byte[transport.Length + 1];
+        await stream.ReadExactlyAsync(handshake, cancellationToken);
+        Assert.That(handshake[0], Is.EqualTo(transport.Length));
+        Assert.That(handshake.Skip(1), Is.EqualTo(transport));
+
+        var connect = await ReadRequest(stream, cancellationToken);
+        Assert.That(connect.ConnectionRequest.MajorApiVersion, Is.EqualTo(2));
+        Assert.That(connect.ConnectionRequest.MinorApiVersion, Is.EqualTo(4));
+        return connect;
     }
 
     private static async Task<Request> ReadRequest(Stream stream, CancellationToken cancellationToken)

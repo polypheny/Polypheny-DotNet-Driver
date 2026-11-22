@@ -15,7 +15,7 @@ Connect .NET applications to Polypheny-DB over the Prism query interface. The dr
 
 - The driver targets .NET 6. Use the .NET 8 SDK to run this repository's tests.
 - Connect to a Polypheny-DB server with a compatible Prism 2.x interface. Document collection metadata needs server support introduced in Prism 2.2. A Prism 1.x server requires an earlier driver.
-- Cypher queries require a server with Cypher enabled over Prism 2.3. The driver uses the published `Polypheny.Prism` 2.3.0 NuGet package.
+- Cypher queries require a server with Cypher enabled over Prism 2.3 or later. The driver uses the published `Polypheny.Prism` 2.4.0 NuGet package.
 - Enable the Prism query interface on the server. The examples use its default TCP port `20590` and the local development credentials `pa` with an empty password.
 
 See the [Polypheny-DB setup instructions](https://github.com/polypheny/Polypheny-DB) to start a server.
@@ -76,6 +76,20 @@ transaction.Commit();
 ```
 
 Call `transaction.Rollback()` to discard uncommitted DML.
+
+## Handle server errors
+
+The driver surfaces Prism errors from operations such as login, statements, metadata,
+transactions and Cypher pagination as `PolyphenyException`, a `DbException`.
+This API is available starting with driver version 2.2.0.
+`Message` contains the original server text. With server support for Prism 2.4
+error details, `SqlState` contains the optional SQLSTATE (including `XX000` for
+an internal server error) and `ServerErrorCode` contains the optional numeric
+code, including zero when the server sends it. Each absent field is `null`.
+
+Use `SqlState` for programmatic handling and `Message` for diagnostics.
+After a statement error in a manual transaction, call `Rollback()` before
+continuing with that connection.
 
 ## Query documents
 
@@ -156,7 +170,7 @@ Results belong to the session that created them. Reopening a connection does not
 
 Connections use manual transactions by default. Use `connection.BeginTransaction().Commit()` or `Rollback()`
 for graph writes. For autocommit, construct a connection with `new PolyphenyConfig { AutoCommit = true }`.
-Prism accepts one Cypher statement per request. Prepared and parameterized Cypher statements are unsupported.
+The driver's Cypher execution APIs accept one direct, parameter-free statement per request.
 
 ## Discover entity metadata
 

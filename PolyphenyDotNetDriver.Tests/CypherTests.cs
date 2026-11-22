@@ -77,7 +77,7 @@ public class CypherTests
         acknowledgment.SetResult(Acknowledgment());
         if (fail)
         {
-            var error = Assert.ThrowsAsync<InvalidOperationException>(async () => await executing);
+            var error = Assert.ThrowsAsync<PolyphenyException>(async () => await executing);
             Assert.That(error!.Message, Is.EqualTo("Invalid Cypher"));
         }
         else
@@ -358,21 +358,72 @@ public class CypherTests
     }
 
     [Test]
-    public void FetchFailureClosesStatementAndRetainsOriginalError()
+    public async Task FetchFailureClosesStatementAndRetainsOriginalError()
     {
-        var mock = new Mock<IPolyphenyConnection>();
+        var mock = new Mock<IPolyphenyConnection>(MockBehavior.Strict);
         mock.SetupSequence(connection => connection.SendRecv(It.IsAny<Request>()))
             .ReturnsAsync(Acknowledgment())
-            .ReturnsAsync(new Response { Last = true, ErrorResponse = new ErrorResponse { Message = "Cypher cursor expired" } })
-            .ThrowsAsync(new IOException("cleanup also failed"));
+            .ReturnsAsync(new Response
+            {
+                Last = true,
+                ErrorResponse = new ErrorResponse
+                {
+                    Message = "Cypher cursor expired",
+                    Details = new ErrorDetails { State = "34000", ErrorCode = 0 }
+                }
+            })
+            .ReturnsAsync(new Response
+            {
+                Last = true,
+                ErrorResponse = new ErrorResponse
+                {
+                    Message = "Cleanup failed",
+                    Details = new ErrorDetails { State = "XX000" }
+                }
+            });
         mock.Setup(connection => connection.Receive(8)).ReturnsAsync(Result(new StatementResult
         {
             Frame = new Frame { IsLast = false, GraphFrame = new GraphFrame() }
         }));
-        var result = new PolyphenyCommand().WithConnection(mock.Object).WithCommandText("MATCH (n) RETURN n").ExecuteCypher("patients");
-        var error = Assert.Throws<InvalidOperationException>(() => result.FetchNext());
-        Assert.That(error!.Message, Is.EqualTo("Cypher cursor expired"));
+        await using var result = await new PolyphenyCommand().WithConnection(mock.Object).WithCommandText("MATCH (n) RETURN n")
+            .ExecuteCypherAsync("patients");
+        var error = Assert.ThrowsAsync<PolyphenyException>(() => result.FetchNextAsync());
+        Assert.Multiple(() =>
+        {
+            Assert.That(error!.Message, Is.EqualTo("Cypher cursor expired"));
+            Assert.That(error.SqlState, Is.EqualTo("34000"));
+            Assert.That(error.ServerErrorCode, Is.Zero);
+            Assert.That(result.IsClosed, Is.True);
+        });
+        Assert.That(await result.FetchNextAsync(), Is.False);
+        mock.Verify(connection => connection.SendRecv(It.Is<Request>(request => request.FetchRequest != null && request.FetchRequest.StatementId == 7)), Times.Once);
+        mock.Verify(connection => connection.SendRecv(It.Is<Request>(request => request.CloseStatementRequest != null && request.CloseStatementRequest.StatementId == 7)), Times.Once);
+    }
+
+    [Test]
+    public async Task ExplicitStatementCloseReportsServerError()
+    {
+        var mock = new Mock<IPolyphenyConnection>(MockBehavior.Strict);
+        mock.SetupSequence(connection => connection.SendRecv(It.IsAny<Request>()))
+            .ReturnsAsync(Acknowledgment())
+            .ReturnsAsync(new Response
+            {
+                Last = true,
+                ErrorResponse = new ErrorResponse
+                {
+                    Message = "Invalid cursor",
+                    Details = new ErrorDetails { State = "34000" }
+                }
+            });
+        mock.Setup(connection => connection.Receive(8)).ReturnsAsync(Result(new StatementResult { Scalar = 0 }));
+        var result = await new PolyphenyCommand().WithConnection(mock.Object).WithCommandText("MATCH (n) DELETE n")
+            .ExecuteCypherAsync("patients");
+
+        var error = Assert.ThrowsAsync<PolyphenyException>(() => result.DisposeAsync().AsTask());
+        Assert.That(error!.SqlState, Is.EqualTo("34000"));
         Assert.That(result.IsClosed, Is.True);
+        await result.DisposeAsync();
+        mock.Verify(connection => connection.SendRecv(It.Is<Request>(request => request.CloseStatementRequest != null && request.CloseStatementRequest.StatementId == 7)), Times.Once);
     }
 
     [Test]
@@ -385,7 +436,7 @@ public class CypherTests
             Last = true,
             ErrorResponse = new ErrorResponse { Message = "Prism requires exactly one Cypher statement per request." }
         });
-        var error = Assert.Throws<InvalidOperationException>(() =>
+        var error = Assert.Throws<PolyphenyException>(() =>
             new PolyphenyCommand().WithConnection(mock.Object).WithCommandText("RETURN 1; RETURN 2").ExecuteCypher("patients"));
         Assert.That(error!.Message, Does.Contain("exactly one Cypher statement"));
         mock.Verify(connection => connection.SendRecv(It.Is<Request>(request => request.CloseStatementRequest != null && request.CloseStatementRequest.StatementId == 7)), Times.Once);

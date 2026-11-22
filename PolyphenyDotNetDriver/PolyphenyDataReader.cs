@@ -276,9 +276,11 @@ namespace PolyphenyDotNetDriver
             };
 
             var response = await this._cmd.SendRecv(request);
+            PrismResponse.ThrowIfError(response);
             var tmpId = response?.StatementResponse?.StatementId;
 
             var newResponse = await this._cmd.Receive(8);
+            PrismResponse.ThrowIfError(newResponse);
             var statementId = newResponse?.StatementResponse?.StatementId;
             if (statementId != tmpId)
             {
