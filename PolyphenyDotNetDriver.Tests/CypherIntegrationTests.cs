@@ -206,7 +206,11 @@ public class CypherIntegrationTests
         Assert.That(result.Kind, Is.EqualTo(CypherResultKind.Rows));
         Assert.That(result.Columns.Single().ColumnLabel, Is.EqualTo("values"));
         var values = (object[])result.Rows.Single().Single();
-        Assert.That(values, Is.EqualTo(new object?[] { new PolyphenyDecimal(1, 0), new PolyphenyDecimal(2, 0), null }));
+        Assert.That(values, Has.Length.EqualTo(3));
+        // Servers before Polypheny-DB #583 encoded these integer literals as exact decimals.
+        Assert.That(values[0], Is.TypeOf<int>().And.EqualTo(1).Or.EqualTo(new PolyphenyDecimal(1, 0)));
+        Assert.That(values[1], Is.TypeOf<int>().And.EqualTo(2).Or.EqualTo(new PolyphenyDecimal(2, 0)));
+        Assert.That(values[2], Is.Null);
     }
 
     [TestCase(false)]

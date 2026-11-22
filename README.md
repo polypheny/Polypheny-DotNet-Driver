@@ -152,7 +152,7 @@ A path in a mixed projection is a `GraphPath`, whose `Nodes` and `Edges` follow 
 An edge retains its original endpoints and direction when traversed in reverse.
 A whole-graph value in a row is a `GraphValue`, including isolated nodes.
 Standalone paths and whole-graph queries use the flat graph stream, where path boundaries are not available.
-Exact decimal values, including Cypher numeric literals, are represented by `PolyphenyDecimal`.
+Exact decimal values are represented by `PolyphenyDecimal`.
 Its `UnscaledValue` and `Scale` preserve the value as `UnscaledValue * 10^(-Scale)`.
 `ToString()` uses an exact base-10 exponent representation.
 Binary and file values decode to byte arrays. Dates and timestamps are UTC `DateTime` values,
