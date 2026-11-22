@@ -50,7 +50,7 @@ public class PolyphenyTransaction: DbTransaction
         };
         
         var response = await PolyphenyConnection.SendRecv(request).ConfigureAwait(false);
-        PrismResponse.ThrowIfError(response);
+        PrismResponse.ThrowIfError(response, request.Id);
     }
 
     public override void Rollback() => RollbackAsync(CancellationToken.None).GetAwaiter().GetResult();
@@ -63,7 +63,7 @@ public class PolyphenyTransaction: DbTransaction
         };
 
         var response = await PolyphenyConnection.SendRecv(request).ConfigureAwait(false);
-        PrismResponse.ThrowIfError(response);
+        PrismResponse.ThrowIfError(response, request.Id);
     }
 
     public readonly IPolyphenyConnection PolyphenyConnection;

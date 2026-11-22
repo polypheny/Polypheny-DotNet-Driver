@@ -275,20 +275,12 @@ namespace PolyphenyDotNetDriver
                 }
             };
 
-            var response = await this._cmd.SendRecv(request);
-            PrismResponse.ThrowIfError(response);
-            var tmpId = response?.StatementResponse?.StatementId;
-
-            var newResponse = await this._cmd.Receive(8);
-            PrismResponse.ThrowIfError(newResponse);
-            var statementId = newResponse?.StatementResponse?.StatementId;
-            if (statementId != tmpId)
-            {
-                throw new Exception("StatementID mismatch");
-            }
-
-            var resultSets = ExtractResultSet(newResponse);
-            this.ResultSets = resultSets;
+            const string mismatchMessage = "StatementID mismatch";
+            var response = _cmd is PolyphenyCommand command
+                ? await command.ExecuteUnparameterizedAsync(request, mismatchMessage).ConfigureAwait(false)
+                : await PrismStatement.ExecuteUnparameterizedAsync(
+                    request, _cmd.SendRecv, _cmd.Receive, mismatchMessage).ConfigureAwait(false);
+            this.ResultSets = ExtractResultSet(response);
         }
 
         private static PolyphenyResultSets ExtractResultSet(Response response)

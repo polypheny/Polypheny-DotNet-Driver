@@ -96,6 +96,7 @@ namespace PolyphenyDotNetDriver
 
         private TcpClient _client;
         private NetworkStream _stream;
+        private ulong? _pendingRequestId;
         private long _sessionVersion;
         internal long SessionVersion => Volatile.Read(ref _sessionVersion);
 
@@ -124,10 +125,12 @@ namespace PolyphenyDotNetDriver
             {
                 if (State == ConnectionState.Open)
                 {
-                    // Disconnect ends the session even when the server replies with an error.
-                    await Send(new Request { DisconnectRequest = new DisconnectRequest() }).ConfigureAwait(false);
-                    await ReceiveResponse(8, CancellationToken.None).ConfigureAwait(false);
+                    await SendRecv(new Request { DisconnectRequest = new DisconnectRequest() }).ConfigureAwait(false);
                 }
+            }
+            catch (PolyphenyException)
+            {
+                // Disconnect ends the session even when the server replies with an error.
             }
             finally
             {
@@ -149,6 +152,7 @@ namespace PolyphenyDotNetDriver
             this._client?.Dispose();
             this._client = null;
             this._stream = null;
+            this._pendingRequestId = null;
             Interlocked.Exchange(ref this._isConnected, PolyphenyConnectionState.StatusDisconnected);
         }
 
@@ -362,25 +366,51 @@ namespace PolyphenyDotNetDriver
             }
         }
 
-        public Task Send(Request req, int lengthSize=8) => RawSend(req.ToByteArray(), lengthSize);
+        public Task Send(Request req, int lengthSize=8) => Send(req, lengthSize, CancellationToken.None);
+
+        private async Task Send(Request request, int lengthSize, CancellationToken cancellationToken)
+        {
+            var stream = _stream;
+            await RawSend(request.ToByteArray(), lengthSize, cancellationToken).ConfigureAwait(false);
+            if (ReferenceEquals(_stream, stream))
+            {
+                _pendingRequestId = request.Id;
+            }
+        }
         
         public Task<Response> Receive(int lengthSize=8) => Receive(lengthSize, CancellationToken.None);
 
         private async Task<Response> Receive(int lengthSize, CancellationToken cancellationToken)
         {
-            var response = await ReceiveResponse(lengthSize, cancellationToken).ConfigureAwait(false);
-            PrismResponse.ThrowIfError(response);
-            return response;
+            var stream = _stream;
+            var requestId = _pendingRequestId;
+            var response = Response.Parser.ParseFrom(await RawReceive(lengthSize, cancellationToken).ConfigureAwait(false));
+            try
+            {
+                PrismResponse.ValidateRequestId(response, requestId);
+                if (response.Last && ReferenceEquals(_stream, stream))
+                {
+                    _pendingRequestId = null;
+                }
+                PrismResponse.ThrowIfError(response);
+                return response;
+            }
+            catch (InvalidDataException)
+            {
+                // There may still be unread frames for the pending request.
+                if (ReferenceEquals(_stream, stream))
+                {
+                    DisposeTransport();
+                }
+                throw;
+            }
         }
-
-        private async Task<Response> ReceiveResponse(int lengthSize, CancellationToken cancellationToken)
-            => Response.Parser.ParseFrom(await RawReceive(lengthSize, cancellationToken).ConfigureAwait(false));
 
         public Task<Response> SendRecv(Request m) => SendRecv(m, CancellationToken.None);
 
         private async Task<Response> SendRecv(Request request, CancellationToken cancellationToken)
         {
-            await RawSend(request.ToByteArray(), 8, cancellationToken).ConfigureAwait(false);
+            await Send(request, 8, cancellationToken).ConfigureAwait(false);
             return await Receive(8, cancellationToken).ConfigureAwait(false);
         }
     }

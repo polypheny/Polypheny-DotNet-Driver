@@ -501,12 +501,22 @@ public class CypherTests
     [TestCase("id")]
     [TestCase("last")]
     [TestCase("frame")]
+    [TestCase("error-id")]
+    [TestCase("error-last")]
     public void MalformedFetchResponseClosesTheCursor(string defect)
     {
         var response = new Response { Last = true, Frame = new Frame { IsLast = true, GraphFrame = new GraphFrame() } };
-        if (defect == "id") response.Id = 99;
-        if (defect == "last") response.Last = false;
+        if (defect is "id" or "error-id") response.Id = 99;
+        if (defect is "last" or "error-last") response.Last = false;
         if (defect == "frame") response.Frame = null;
+        if (defect is "error-id" or "error-last")
+        {
+            response.ErrorResponse = new ErrorResponse
+            {
+                Message = "Cursor expired",
+                Details = new ErrorDetails { State = "34000" }
+            };
+        }
         var mock = new Mock<IPolyphenyConnection>();
         mock.SetupSequence(connection => connection.SendRecv(It.IsAny<Request>()))
             .ReturnsAsync(Acknowledgment()).ReturnsAsync(response).ReturnsAsync(Closed());

@@ -92,7 +92,7 @@ public sealed class PolyphenyCypherResult : IDisposable, IAsyncDisposable
             {
                 return false;
             }
-            if (!IsCurrentSession(_connection, _sessionVersion))
+            if (!PrismStatement.IsCurrentSession(_connection, _sessionVersion))
             {
                 throw new InvalidOperationException("The connection session that owns this Cypher result has ended.");
             }
@@ -101,11 +101,11 @@ public sealed class PolyphenyCypherResult : IDisposable, IAsyncDisposable
                 FetchRequest = new FetchRequest { StatementId = _statementId, FetchSize = _fetchSize }
             };
             var response = await _connection.SendRecv(request).ConfigureAwait(false);
-            if (!IsCurrentSession(_connection, _sessionVersion))
+            if (!PrismStatement.IsCurrentSession(_connection, _sessionVersion))
             {
                 throw new InvalidOperationException("The connection session that owns this Cypher result has ended.");
             }
-            ValidateResponse(response);
+            ValidateResponse(response, request.Id);
             if (response.Id != request.Id || response.Frame == null || !response.Last)
             {
                 throw new InvalidDataException("Expected the final response to a Cypher fetch request.");
@@ -174,7 +174,7 @@ public sealed class PolyphenyCypherResult : IDisposable, IAsyncDisposable
             return;
         }
         IsClosed = true;
-        if (!IsCurrentSession(_connection, _sessionVersion)
+        if (!PrismStatement.IsCurrentSession(_connection, _sessionVersion)
             || _connection is DbConnection connection && connection.State == ConnectionState.Closed)
         {
             return;
@@ -184,7 +184,7 @@ public sealed class PolyphenyCypherResult : IDisposable, IAsyncDisposable
             CloseStatementRequest = new CloseStatementRequest { StatementId = _statementId }
         };
         var response = await _connection.SendRecv(request).ConfigureAwait(false);
-        ValidateResponse(response);
+        ValidateResponse(response, request.Id);
         if (response.Id != request.Id || response.CloseStatementResponse == null || !response.Last)
         {
             throw new InvalidDataException("Expected a statement-close response.");
@@ -203,16 +203,12 @@ public sealed class PolyphenyCypherResult : IDisposable, IAsyncDisposable
         }
     }
 
-    internal static void ValidateResponse(Response response)
+    internal static void ValidateResponse(Response response, ulong requestId)
     {
         if (response == null)
         {
             throw new InvalidDataException("The server returned no Prism response.");
         }
-        PrismResponse.ThrowIfError(response);
+        PrismResponse.ThrowIfError(response, requestId);
     }
-
-    internal static bool IsCurrentSession(IPolyphenyConnection connection, long? version)
-        => connection is not PolyphenyConnection physical
-            || physical.State == ConnectionState.Open && physical.SessionVersion == version;
 }

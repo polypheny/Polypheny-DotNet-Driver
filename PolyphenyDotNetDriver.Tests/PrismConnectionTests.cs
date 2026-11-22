@@ -203,8 +203,14 @@ public class PrismConnectionTests
         }
     }
 
-    [Test]
-    public async Task ExecuteNonQuery_ReportsErrorAfterAcknowledgmentAndSupportsRollback()
+    [TestCase(nameof(PolyphenyCommand.ExecuteNonQuery), false)]
+    [TestCase(nameof(PolyphenyCommand.ExecuteNonQuery), true)]
+    [TestCase(nameof(PolyphenyCommand.ExecuteReader), false)]
+    [TestCase(nameof(PolyphenyCommand.ExecuteReader), true)]
+    [TestCase(nameof(PolyphenyCommand.ExecuteQueryMongo), false)]
+    [TestCase(nameof(PolyphenyCommand.ExecuteQueryMongo), true)]
+    public async Task UnparameterizedExecution_ClosesAcknowledgedStatementAndPreservesErrorThroughRollback(
+        string operation, bool cleanupFails)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -212,7 +218,8 @@ public class PrismConnectionTests
         var server = RunServer(listener, 4, true, async (stream, cancellationToken) =>
         {
             var statement = await ReadRequest(stream, cancellationToken);
-            Assert.That(statement.ExecuteUnparameterizedStatementRequest.LanguageName, Is.EqualTo("sql"));
+            var language = operation == nameof(PolyphenyCommand.ExecuteQueryMongo) ? "mongo" : "sql";
+            Assert.That(statement.ExecuteUnparameterizedStatementRequest.LanguageName, Is.EqualTo(language));
             await WriteResponse(stream, new Response
             {
                 Id = statement.Id,
@@ -228,6 +235,23 @@ public class PrismConnectionTests
                     Details = new ErrorDetails { State = "23505", ErrorCode = 0 }
                 }
             }, cancellationToken);
+
+            var close = await ReadRequest(stream, cancellationToken);
+            Assert.That(close.CloseStatementRequest?.StatementId, Is.EqualTo(7));
+            var closeResponse = new Response { Id = close.Id, Last = true };
+            if (cleanupFails)
+            {
+                closeResponse.ErrorResponse = new ErrorResponse
+                {
+                    Message = "Could not close statement.",
+                    Details = new ErrorDetails { State = "XX000", ErrorCode = 3 }
+                };
+            }
+            else
+            {
+                closeResponse.CloseStatementResponse = new CloseStatementResponse();
+            }
+            await WriteResponse(stream, closeResponse, cancellationToken);
 
             var rollback = await ReadRequest(stream, cancellationToken);
             Assert.That(rollback.RollbackRequest, Is.Not.Null);
@@ -247,9 +271,15 @@ public class PrismConnectionTests
         using var connection = OpenableConnection(listener);
         await connection.OpenAsync(timeout.Token);
         using var transaction = connection.BeginTransaction();
-        using var command = connection.CreateCommand();
-        command.CommandText = "INSERT INTO patients VALUES (1)";
-        var error = Assert.Throws<PolyphenyException>(() => command.ExecuteNonQuery());
+        using var command = new PolyphenyCommand().WithConnection(connection);
+        TestDelegate execute = operation switch
+        {
+            nameof(PolyphenyCommand.ExecuteNonQuery) => () => command.WithCommandText("INSERT INTO patients VALUES (1)").ExecuteNonQuery(),
+            nameof(PolyphenyCommand.ExecuteReader) => () => command.WithCommandText("SELECT * FROM patients").ExecuteReader(),
+            nameof(PolyphenyCommand.ExecuteQueryMongo) => () => command.WithCommandText("db.patients.find()").ExecuteQueryMongo(),
+            _ => throw new ArgumentOutOfRangeException(nameof(operation), operation, null)
+        };
+        var error = Assert.Throws<PolyphenyException>(execute);
         Assert.Multiple(() =>
         {
             Assert.That(error!.Message, Is.EqualTo("Duplicate key."));
@@ -264,7 +294,124 @@ public class PrismConnectionTests
     }
 
     [Test]
-    public async Task Close_ClosesTransportEvenWhenDisconnectReportsAServerError()
+    public async Task PreparedExecution_RetainsStatementForRetryAfterErrorAndRollback()
+    {
+        const string sql = "INSERT INTO patients VALUES (?)";
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var server = RunServer(listener, 4, true, async (stream, cancellationToken) =>
+        {
+            var prepare = await ReadRequest(stream, cancellationToken);
+            Assert.That(prepare.PrepareIndexedStatementRequest?.Statement, Is.EqualTo(sql));
+            await WriteResponse(stream, new Response
+            {
+                Id = prepare.Id,
+                Last = true,
+                PreparedStatementSignature = new PreparedStatementSignature
+                {
+                    StatementId = 7,
+                    ParameterMetas = { new ParameterMeta { Name = "id", TypeName = "INTEGER" } }
+                }
+            }, cancellationToken);
+
+            var execute = await ReadRequest(stream, cancellationToken);
+            Assert.That(execute.ExecuteIndexedStatementRequest?.StatementId, Is.EqualTo(7));
+            Assert.That(execute.ExecuteIndexedStatementRequest!.Parameters.Parameters.Single().Integer.Integer, Is.EqualTo(1));
+            await WriteResponse(stream, new Response
+            {
+                Id = execute.Id,
+                Last = true,
+                ErrorResponse = new ErrorResponse
+                {
+                    Message = "Duplicate key.",
+                    Details = new ErrorDetails { State = "23505", ErrorCode = 0 }
+                }
+            }, cancellationToken);
+
+            var rollback = await ReadRequest(stream, cancellationToken);
+            Assert.That(rollback.RollbackRequest, Is.Not.Null);
+            await WriteResponse(stream, new Response
+            {
+                Id = rollback.Id, Last = true, RollbackResponse = new RollbackResponse()
+            }, cancellationToken);
+
+            var retry = await ReadRequest(stream, cancellationToken);
+            Assert.That(retry.ExecuteIndexedStatementRequest?.StatementId, Is.EqualTo(7));
+            Assert.That(retry.ExecuteIndexedStatementRequest!.Parameters.Parameters.Single().Integer.Integer, Is.EqualTo(2));
+            await WriteResponse(stream, new Response
+            {
+                Id = retry.Id, Last = true, StatementResult = new StatementResult { Scalar = 1 }
+            }, cancellationToken);
+        }, timeout.Token);
+
+        using var connection = OpenableConnection(listener);
+        await connection.OpenAsync(timeout.Token);
+        using var transaction = connection.BeginTransaction();
+        using var command = new PolyphenyCommand().WithConnection(connection).WithCommandText(sql)
+            .WithParameterValues(new object[] { 1 });
+        await command.PrepareAsync(timeout.Token);
+        var error = Assert.ThrowsAsync<PolyphenyException>(() => command.ExecuteNonQueryAsync(timeout.Token));
+        Assert.Multiple(() =>
+        {
+            Assert.That(error!.Message, Is.EqualTo("Duplicate key."));
+            Assert.That(error.SqlState, Is.EqualTo("23505"));
+            Assert.That(error.ServerErrorCode, Is.Zero);
+        });
+        await transaction.RollbackAsync(timeout.Token);
+        command.WithParameterValues(new object[] { 2 });
+        Assert.That(await command.ExecuteNonQueryAsync(timeout.Token), Is.EqualTo(1));
+        await connection.CloseAsync();
+        await server;
+    }
+
+    [TestCase(false, false)]
+    [TestCase(false, true)]
+    [TestCase(true, false)]
+    [TestCase(true, true)]
+    public async Task ExecuteNonQuery_RejectsMalformedErrorFrame(bool afterAcknowledgment, bool wrongResponseId)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var server = RunServer(listener, 4, true, async (stream, cancellationToken) =>
+        {
+            var statement = await ReadRequest(stream, cancellationToken);
+            Assert.That(statement.ExecuteUnparameterizedStatementRequest, Is.Not.Null);
+            if (afterAcknowledgment)
+            {
+                await WriteResponse(stream, new Response
+                {
+                    Id = statement.Id,
+                    StatementResponse = new StatementResponse { StatementId = 7 }
+                }, cancellationToken);
+            }
+            await WriteResponse(stream, new Response
+            {
+                Id = wrongResponseId ? statement.Id + 1 : statement.Id,
+                Last = wrongResponseId,
+                ErrorResponse = new ErrorResponse
+                {
+                    Message = "Duplicate key.",
+                    Details = new ErrorDetails { State = "23505", ErrorCode = 0 }
+                }
+            }, cancellationToken);
+            Assert.That(await stream.ReadAsync(new byte[1], cancellationToken), Is.Zero);
+        }, timeout.Token, expectDisconnect: false);
+
+        using var connection = OpenableConnection(listener);
+        await connection.OpenAsync(timeout.Token);
+        using var command = connection.CreateCommand();
+        command.CommandText = "INSERT INTO patients VALUES (1)";
+        Assert.ThrowsAsync<InvalidDataException>(() => command.ExecuteNonQueryAsync(timeout.Token));
+        Assert.That(connection.State, Is.EqualTo(ConnectionState.Closed));
+        await server;
+    }
+
+    [TestCase("terminal")]
+    [TestCase("wrong-id")]
+    [TestCase("nonterminal")]
+    public async Task Close_ClosesTransportWhenDisconnectReportsAServerError(string errorFrame)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -275,8 +422,8 @@ public class PrismConnectionTests
             Assert.That(disconnect.DisconnectRequest, Is.Not.Null);
             await WriteResponse(stream, new Response
             {
-                Id = disconnect.Id,
-                Last = true,
+                Id = errorFrame == "wrong-id" ? disconnect.Id + 1 : disconnect.Id,
+                Last = errorFrame != "nonterminal",
                 ErrorResponse = new ErrorResponse { Message = "Session already closed." }
             }, cancellationToken);
             Assert.That(await stream.ReadAsync(new byte[1], cancellationToken), Is.Zero);
@@ -284,7 +431,14 @@ public class PrismConnectionTests
 
         using var connection = OpenableConnection(listener);
         await connection.OpenAsync(timeout.Token);
-        connection.Close();
+        if (errorFrame == "terminal")
+        {
+            connection.Close();
+        }
+        else
+        {
+            Assert.Throws<InvalidDataException>(() => connection.Close());
+        }
         Assert.That(connection.State, Is.EqualTo(ConnectionState.Closed));
         await server;
     }
