@@ -102,16 +102,8 @@ namespace PolyphenyDotNetDriver
                 }
             };
 
-            var response = await SendRecv(request);
-            var tmpId = response?.StatementResponse?.StatementId;
-
-            var newResponse = await Receive(8);
-            if (newResponse?.StatementResponse?.StatementId != tmpId)
-            {
-                throw new Exception("StatementId mismatch");
-            }
-
-            var stmtResult = newResponse?.StatementResponse?.Result;
+            var response = await ExecuteUnparameterizedAsync(request, "StatementId mismatch").ConfigureAwait(false);
+            var stmtResult = response?.StatementResponse?.Result;
             var result = ProtoHelper.FormatResult(stmtResult);
             
             return (int)result.RowsAffected;
@@ -185,7 +177,7 @@ namespace PolyphenyDotNetDriver
         public async Task<Response> SendRecv(Request m)
         {
             var response = await this.connection.SendRecv(m).ConfigureAwait(false);
-            PrismResponse.ThrowIfError(response);
+            PrismResponse.ThrowIfError(response, m.Id);
             return response;
         }
 
@@ -194,6 +186,13 @@ namespace PolyphenyDotNetDriver
             var response = await this.connection.Receive(lengthSize).ConfigureAwait(false);
             PrismResponse.ThrowIfError(response);
             return response;
+        }
+
+        internal Task<Response> ExecuteUnparameterizedAsync(Request request, string mismatchMessage)
+        {
+            var executionConnection = connection;
+            return PrismStatement.ExecuteUnparameterizedAsync(
+                request, executionConnection.SendRecv, executionConnection.Receive, mismatchMessage, executionConnection);
         }
 
         public override string CommandText { get; set; } = string.Empty;
@@ -227,7 +226,7 @@ namespace PolyphenyDotNetDriver
                 throw new InvalidOperationException("Connection property must be non-null.");
             }
             var sessionVersion = (executionConnection as PolyphenyConnection)?.SessionVersion;
-            if (!PolyphenyCypherResult.IsCurrentSession(executionConnection, sessionVersion))
+            if (!PrismStatement.IsCurrentSession(executionConnection, sessionVersion))
             {
                 throw new InvalidOperationException("Open the connection before executing Cypher.");
             }
@@ -262,11 +261,11 @@ namespace PolyphenyDotNetDriver
                     }
                 };
                 var acknowledgment = await executionConnection.SendRecv(request).ConfigureAwait(false);
-                if (!PolyphenyCypherResult.IsCurrentSession(executionConnection, sessionVersion))
+                if (!PrismStatement.IsCurrentSession(executionConnection, sessionVersion))
                 {
                     throw new InvalidOperationException("The connection session ended during Cypher execution.");
                 }
-                PolyphenyCypherResult.ValidateResponse(acknowledgment);
+                PolyphenyCypherResult.ValidateResponse(acknowledgment, request.Id);
                 if (acknowledgment.Id != request.Id || acknowledgment.StatementResponse == null)
                 {
                     throw new InvalidOperationException("Expected a Cypher statement acknowledgment.");
@@ -278,11 +277,11 @@ namespace PolyphenyDotNetDriver
                 }
 
                 var response = await executionConnection.Receive().ConfigureAwait(false);
-                if (!PolyphenyCypherResult.IsCurrentSession(executionConnection, sessionVersion))
+                if (!PrismStatement.IsCurrentSession(executionConnection, sessionVersion))
                 {
                     throw new InvalidOperationException("The connection session ended during Cypher execution.");
                 }
-                PolyphenyCypherResult.ValidateResponse(response);
+                PolyphenyCypherResult.ValidateResponse(response, request.Id);
                 if (response.Id != acknowledgment.Id || !response.Last
                     || response.StatementResponse?.StatementId != statementId)
                 {
@@ -292,19 +291,9 @@ namespace PolyphenyDotNetDriver
             }
             catch
             {
-                if (statementId.HasValue && PolyphenyCypherResult.IsCurrentSession(executionConnection, sessionVersion))
+                if (statementId.HasValue && PrismStatement.IsCurrentSession(executionConnection, sessionVersion))
                 {
-                    try
-                    {
-                        await executionConnection.SendRecv(new Request
-                        {
-                            CloseStatementRequest = new CloseStatementRequest { StatementId = statementId.Value }
-                        }).ConfigureAwait(false);
-                    }
-                    catch
-                    {
-                        // Preserve the execution error if cleanup also fails.
-                    }
+                    await PrismStatement.TryCloseAsync(executionConnection.SendRecv, statementId.Value).ConfigureAwait(false);
                 }
                 throw;
             }
@@ -354,16 +343,8 @@ namespace PolyphenyDotNetDriver
             }
 
             var request = new Request { ExecuteUnparameterizedStatementRequest = execute };
-            var response = await SendRecv(request).ConfigureAwait(false);
-            var tmpId = response?.StatementResponse?.StatementId;
-            
-            var newResponse = await Receive(8).ConfigureAwait(false);
-            if (newResponse?.StatementResponse?.StatementId != tmpId)
-            {
-                throw new Exception("StatementId mismatch");
-            }
-
-            var documentFrame = newResponse?.StatementResponse?.Result?.Frame?.DocumentFrame;
+            var response = await ExecuteUnparameterizedAsync(request, "StatementId mismatch").ConfigureAwait(false);
+            var documentFrame = response?.StatementResponse?.Result?.Frame?.DocumentFrame;
             if (documentFrame == null)
             {
                 throw new Exception("Query should return document data, however the result is empty");

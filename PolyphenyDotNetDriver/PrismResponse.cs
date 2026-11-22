@@ -14,17 +14,32 @@
  * limitations under the License.
  */
 
+using System.IO;
 using Polypheny.Prism;
 
 namespace PolyphenyDotNetDriver;
 
 internal static class PrismResponse
 {
-    internal static void ThrowIfError(Response response)
+    internal static void ValidateRequestId(Response response, ulong? requestId)
+    {
+        if (response != null && requestId.HasValue && response.Id != requestId.Value)
+        {
+            throw new InvalidDataException("The Prism response ID does not match its request.");
+        }
+    }
+
+    internal static void ThrowIfError(Response response, ulong? requestId = null)
     {
         if (response?.ErrorResponse is not { } error)
         {
             return;
+        }
+
+        ValidateRequestId(response, requestId);
+        if (!response.Last)
+        {
+            throw new InvalidDataException("A Prism error response must be final.");
         }
 
         var details = error.Details;

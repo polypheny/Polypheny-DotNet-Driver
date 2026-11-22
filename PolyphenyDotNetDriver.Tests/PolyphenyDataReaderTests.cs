@@ -745,10 +745,10 @@ public class PolyphenyDataReaderTests
     public void ReadAsync_WithStubResultErrorReportsPrismDetails()
     {
         _mockCommand.Setup(x => x.CommandText).Returns("SELECT * FROM missing");
-        _mockCommand.Setup(x => x.SendRecv(It.IsAny<Request>())).ReturnsAsync(new Response
-        {
-            StatementResponse = new StatementResponse { StatementId = 1 }
-        });
+        _mockCommand.Setup(x => x.SendRecv(It.Is<Request>(request => request.ExecuteUnparameterizedStatementRequest != null)))
+            .ReturnsAsync(new Response { StatementResponse = new StatementResponse { StatementId = 1 } });
+        _mockCommand.Setup(x => x.SendRecv(It.Is<Request>(request => request.CloseStatementRequest != null)))
+            .ReturnsAsync(new Response { Last = true, CloseStatementResponse = new CloseStatementResponse() });
         _mockCommand.Setup(x => x.Receive(8)).ReturnsAsync(new Response
         {
             Last = true,
@@ -768,6 +768,8 @@ public class PolyphenyDataReaderTests
             Assert.That(error.SqlState, Is.EqualTo("42P01"));
             Assert.That(error.ServerErrorCode, Is.Null);
         });
+        _mockCommand.Verify(x => x.SendRecv(It.Is<Request>(request =>
+            request.CloseStatementRequest != null && request.CloseStatementRequest.StatementId == 1)), Times.Once);
     }
 
     [Test]

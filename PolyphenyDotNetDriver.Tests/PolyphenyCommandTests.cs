@@ -77,8 +77,11 @@ public class PolyphenyCommandTests
             }
         };
         var acknowledgment = new Response { StatementResponse = new StatementResponse { StatementId = 1 } };
-        _mockConnection.Setup(x => x.SendRecv(It.IsAny<Request>())).ReturnsAsync(beforeAcknowledgment ? response : acknowledgment);
+        _mockConnection.Setup(x => x.SendRecv(It.Is<Request>(request => request.ExecuteUnparameterizedStatementRequest != null)))
+            .ReturnsAsync(beforeAcknowledgment ? response : acknowledgment);
         _mockConnection.Setup(x => x.Receive(8)).ReturnsAsync(response);
+        _mockConnection.Setup(x => x.SendRecv(It.Is<Request>(request => request.CloseStatementRequest != null)))
+            .ReturnsAsync(new Response { Last = true, CloseStatementResponse = new CloseStatementResponse() });
         using var command = new PolyphenyCommand().WithConnection(_mockConnection.Object).WithCommandText("bad statement");
 
         var error = Assert.ThrowsAsync<PolyphenyException>(() => command.ExecuteNonQueryAsync(CancellationToken.None));
@@ -90,6 +93,15 @@ public class PolyphenyCommandTests
             Assert.That(error.ServerErrorCode, Is.EqualTo(73));
         });
         _mockConnection.Verify(x => x.Receive(8), beforeAcknowledgment ? Times.Never() : Times.Once());
+        if (beforeAcknowledgment)
+        {
+            _mockConnection.Verify(x => x.SendRecv(It.Is<Request>(request => request.CloseStatementRequest != null)), Times.Never);
+        }
+        else
+        {
+            _mockConnection.Verify(x => x.SendRecv(It.Is<Request>(request =>
+                request.CloseStatementRequest != null && request.CloseStatementRequest.StatementId == 1)), Times.Once);
+        }
     }
 
     [Test]
