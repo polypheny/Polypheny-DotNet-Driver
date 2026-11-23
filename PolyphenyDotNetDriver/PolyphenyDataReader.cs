@@ -276,7 +276,8 @@ namespace PolyphenyDotNetDriver
             };
 
             const string mismatchMessage = "StatementID mismatch";
-            var response = _cmd is PolyphenyCommand command
+            // Only the built-in command is known to use its captured connection for both RPCs.
+            var response = _cmd is PolyphenyCommand command && command.GetType() == typeof(PolyphenyCommand)
                 ? await command.ExecuteUnparameterizedAsync(request, mismatchMessage).ConfigureAwait(false)
                 : await PrismStatement.ExecuteUnparameterizedAsync(
                     request, _cmd.SendRecv, _cmd.Receive, mismatchMessage).ConfigureAwait(false);

@@ -203,18 +203,21 @@ public class PrismConnectionTests
         }
     }
 
-    [TestCase(nameof(PolyphenyCommand.ExecuteNonQuery), false)]
-    [TestCase(nameof(PolyphenyCommand.ExecuteNonQuery), true)]
-    [TestCase(nameof(PolyphenyCommand.ExecuteReader), false)]
-    [TestCase(nameof(PolyphenyCommand.ExecuteReader), true)]
-    [TestCase(nameof(PolyphenyCommand.ExecuteQueryMongo), false)]
-    [TestCase(nameof(PolyphenyCommand.ExecuteQueryMongo), true)]
-    public async Task UnparameterizedExecution_ClosesAcknowledgedStatementAndPreservesErrorThroughRollback(
-        string operation, bool cleanupFails)
+    [TestCase(nameof(PolyphenyCommand.ExecuteNonQuery), "success")]
+    [TestCase(nameof(PolyphenyCommand.ExecuteNonQuery), "error")]
+    [TestCase(nameof(PolyphenyCommand.ExecuteNonQuery), "nonterminal")]
+    [TestCase(nameof(PolyphenyCommand.ExecuteNonQuery), "wrong-type")]
+    [TestCase(nameof(PolyphenyCommand.ExecuteReader), "success")]
+    [TestCase(nameof(PolyphenyCommand.ExecuteReader), "error")]
+    [TestCase(nameof(PolyphenyCommand.ExecuteQueryMongo), "success")]
+    [TestCase(nameof(PolyphenyCommand.ExecuteQueryMongo), "error")]
+    public async Task UnparameterizedExecution_ClosesAcknowledgedStatementAndPreservesPrimaryError(
+        string operation, string cleanupReply)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
+        var malformedCleanup = cleanupReply is "nonterminal" or "wrong-type";
         var server = RunServer(listener, 4, true, async (stream, cancellationToken) =>
         {
             var statement = await ReadRequest(stream, cancellationToken);
@@ -238,8 +241,8 @@ public class PrismConnectionTests
 
             var close = await ReadRequest(stream, cancellationToken);
             Assert.That(close.CloseStatementRequest?.StatementId, Is.EqualTo(7));
-            var closeResponse = new Response { Id = close.Id, Last = true };
-            if (cleanupFails)
+            var closeResponse = new Response { Id = close.Id, Last = cleanupReply != "nonterminal" };
+            if (cleanupReply == "error")
             {
                 closeResponse.ErrorResponse = new ErrorResponse
                 {
@@ -247,11 +250,21 @@ public class PrismConnectionTests
                     Details = new ErrorDetails { State = "XX000", ErrorCode = 3 }
                 };
             }
+            else if (cleanupReply == "wrong-type")
+            {
+                closeResponse.ConnectionCheckResponse = new ConnectionCheckResponse();
+            }
             else
             {
                 closeResponse.CloseStatementResponse = new CloseStatementResponse();
             }
             await WriteResponse(stream, closeResponse, cancellationToken);
+            if (malformedCleanup)
+            {
+                Assert.That(await stream.ReadAsync(new byte[1], cancellationToken), Is.Zero,
+                    "The client must close the transport before it can send a rollback.");
+                return;
+            }
 
             var rollback = await ReadRequest(stream, cancellationToken);
             Assert.That(rollback.RollbackRequest, Is.Not.Null);
@@ -266,7 +279,7 @@ public class PrismConnectionTests
             {
                 Id = ping.Id, Last = true, ConnectionCheckResponse = new ConnectionCheckResponse()
             }, cancellationToken);
-        }, timeout.Token);
+        }, timeout.Token, expectDisconnect: !malformedCleanup);
 
         using var connection = OpenableConnection(listener);
         await connection.OpenAsync(timeout.Token);
@@ -285,10 +298,75 @@ public class PrismConnectionTests
             Assert.That(error!.Message, Is.EqualTo("Duplicate key."));
             Assert.That(error.SqlState, Is.EqualTo("23505"));
             Assert.That(error.ServerErrorCode, Is.Zero);
-            Assert.That(connection.State, Is.EqualTo(ConnectionState.Open));
+            Assert.That(connection.State, Is.EqualTo(malformedCleanup ? ConnectionState.Closed : ConnectionState.Open));
         });
-        await transaction.RollbackAsync(timeout.Token);
-        await connection.Ping(timeout.Token);
+        if (malformedCleanup)
+        {
+            Assert.ThrowsAsync<InvalidOperationException>(() => transaction.RollbackAsync(timeout.Token));
+        }
+        else
+        {
+            await transaction.RollbackAsync(timeout.Token);
+            await connection.Ping(timeout.Token);
+        }
+        await connection.CloseAsync();
+        await server;
+    }
+
+    [Test]
+    public async Task SequentialSends_PreserveResponseOrderThroughAnIntermediateFrameAndServerError()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var server = RunServer(listener, 4, true, async (stream, cancellationToken) =>
+        {
+            var execute = await ReadRequest(stream, cancellationToken);
+            var ping = await ReadRequest(stream, cancellationToken);
+            Assert.That(execute.Id, Is.EqualTo(41));
+            Assert.That(ping.Id, Is.EqualTo(42));
+            await WriteResponse(stream, new Response
+            {
+                Id = execute.Id, StatementResponse = new StatementResponse { StatementId = 7 }
+            }, cancellationToken);
+            await WriteResponse(stream, new Response
+            {
+                Id = execute.Id,
+                Last = true,
+                ErrorResponse = new ErrorResponse
+                {
+                    Message = "Unknown table.",
+                    Details = new ErrorDetails { State = "42P01" }
+                }
+            }, cancellationToken);
+            await WriteResponse(stream, new Response
+            {
+                Id = ping.Id, Last = true, ConnectionCheckResponse = new ConnectionCheckResponse()
+            }, cancellationToken);
+        }, timeout.Token);
+
+        using var connection = OpenableConnection(listener);
+        await connection.OpenAsync(timeout.Token);
+        await connection.Send(new Request
+        {
+            Id = 41,
+            ExecuteUnparameterizedStatementRequest = new ExecuteUnparameterizedStatementRequest
+            {
+                LanguageName = "sql", Statement = "SELECT * FROM missing"
+            }
+        });
+        await connection.Send(new Request { Id = 42, ConnectionCheckRequest = new ConnectionCheckRequest() });
+
+        var acknowledgment = await connection.Receive();
+        Assert.That(acknowledgment.Id, Is.EqualTo(41));
+        Assert.That(acknowledgment.Last, Is.False);
+        Assert.That(acknowledgment.StatementResponse?.StatementId, Is.EqualTo(7));
+        var error = Assert.ThrowsAsync<PolyphenyException>(() => connection.Receive());
+        Assert.That(error!.SqlState, Is.EqualTo("42P01"));
+        var response = await connection.Receive();
+        Assert.That(response.Id, Is.EqualTo(42));
+        Assert.That(response.ConnectionCheckResponse, Is.Not.Null);
+        Assert.That(connection.State, Is.EqualTo(ConnectionState.Open));
         await connection.CloseAsync();
         await server;
     }
@@ -444,6 +522,27 @@ public class PrismConnectionTests
     }
 
     [Test]
+    public async Task Close_WithPendingRequestClosesTransportWithoutSendingDisconnect()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var server = RunServer(listener, 4, true, async (stream, cancellationToken) =>
+        {
+            var pending = await ReadRequest(stream, cancellationToken);
+            Assert.That(pending.ConnectionCheckRequest, Is.Not.Null);
+            Assert.That(await stream.ReadAsync(new byte[1], cancellationToken), Is.Zero);
+        }, timeout.Token, expectDisconnect: false);
+
+        using var connection = OpenableConnection(listener);
+        await connection.OpenAsync(timeout.Token);
+        await connection.Send(new Request { Id = 43, ConnectionCheckRequest = new ConnectionCheckRequest() });
+        await connection.CloseAsync();
+        Assert.That(connection.State, Is.EqualTo(ConnectionState.Closed));
+        await server;
+    }
+
+    [Test]
     public async Task CypherResultCanBeDisposedAfterItsConnection()
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -451,20 +550,7 @@ public class PrismConnectionTests
         listener.Start();
         var server = RunServer(listener, 3, true, async (stream, cancellationToken) =>
         {
-            var execute = await ReadRequest(stream, cancellationToken);
-            await WriteResponse(stream, new Response
-            {
-                Id = execute.Id, StatementResponse = new StatementResponse { StatementId = 7 }
-            }, cancellationToken);
-            await WriteResponse(stream, new Response
-            {
-                Id = execute.Id, Last = true,
-                StatementResponse = new StatementResponse
-                {
-                    StatementId = 7,
-                    Result = new StatementResult { Frame = new Frame { IsLast = false, GraphFrame = new GraphFrame() } }
-                }
-            }, cancellationToken);
+            await RespondWithCypherGraphResult(stream, isLast: false, cancellationToken);
             Assert.That(await stream.ReadAsync(new byte[1], cancellationToken), Is.Zero);
         }, timeout.Token, expectDisconnect: false);
 
@@ -480,6 +566,34 @@ public class PrismConnectionTests
     }
 
     [Test]
+    public async Task CypherResultDispose_ClosesTransportOnNonterminalStatementCloseReply()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var server = RunServer(listener, 4, true, async (stream, cancellationToken) =>
+        {
+            await RespondWithCypherGraphResult(stream, isLast: false, cancellationToken);
+            var close = await ReadRequest(stream, cancellationToken);
+            Assert.That(close.CloseStatementRequest?.StatementId, Is.EqualTo(7));
+            await WriteResponse(stream, new Response
+            {
+                Id = close.Id, CloseStatementResponse = new CloseStatementResponse()
+            }, cancellationToken);
+            Assert.That(await stream.ReadAsync(new byte[1], cancellationToken), Is.Zero);
+        }, timeout.Token, expectDisconnect: false);
+
+        using var connection = OpenableConnection(listener);
+        await connection.OpenAsync(timeout.Token);
+        await using var result = await new PolyphenyCommand().WithConnection(connection).WithCommandText("MATCH (n) RETURN n")
+            .ExecuteCypherAsync("patients", 1);
+        Assert.ThrowsAsync<InvalidDataException>(() => result.DisposeAsync().AsTask());
+        Assert.That(result.IsClosed, Is.True);
+        Assert.That(connection.State, Is.EqualTo(ConnectionState.Closed));
+        await server;
+    }
+
+    [Test]
     public async Task TruncatedCypherPageRetainsTheTransportFailureAndClosesTheResult()
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -487,20 +601,7 @@ public class PrismConnectionTests
         listener.Start();
         var server = RunServer(listener, 3, true, async (stream, cancellationToken) =>
         {
-            var execute = await ReadRequest(stream, cancellationToken);
-            await WriteResponse(stream, new Response
-            {
-                Id = execute.Id, StatementResponse = new StatementResponse { StatementId = 7 }
-            }, cancellationToken);
-            await WriteResponse(stream, new Response
-            {
-                Id = execute.Id, Last = true,
-                StatementResponse = new StatementResponse
-                {
-                    StatementId = 7,
-                    Result = new StatementResult { Frame = new Frame { IsLast = false, GraphFrame = new GraphFrame() } }
-                }
-            }, cancellationToken);
+            await RespondWithCypherGraphResult(stream, isLast: false, cancellationToken);
             var fetch = await ReadRequest(stream, cancellationToken);
             Assert.That(fetch.FetchRequest.StatementId, Is.EqualTo(7));
             var header = new byte[8];
@@ -528,20 +629,7 @@ public class PrismConnectionTests
         listener.Start();
         var firstSession = RunServer(listener, 3, true, async (stream, cancellationToken) =>
         {
-            var execute = await ReadRequest(stream, cancellationToken);
-            await WriteResponse(stream, new Response
-            {
-                Id = execute.Id, StatementResponse = new StatementResponse { StatementId = 7 }
-            }, cancellationToken);
-            await WriteResponse(stream, new Response
-            {
-                Id = execute.Id, Last = true,
-                StatementResponse = new StatementResponse
-                {
-                    StatementId = 7,
-                    Result = new StatementResult { Frame = new Frame { IsLast = false, GraphFrame = new GraphFrame() } }
-                }
-            }, cancellationToken);
+            await RespondWithCypherGraphResult(stream, isLast: false, cancellationToken);
         }, timeout.Token);
 
         using var connection = OpenableConnection(listener);
@@ -553,21 +641,7 @@ public class PrismConnectionTests
 
         var secondSession = RunServer(listener, 3, true, async (stream, cancellationToken) =>
         {
-            var execute = await ReadRequest(stream, cancellationToken);
-            Assert.That(execute.ExecuteUnparameterizedStatementRequest, Is.Not.Null);
-            await WriteResponse(stream, new Response
-            {
-                Id = execute.Id, StatementResponse = new StatementResponse { StatementId = 7 }
-            }, cancellationToken);
-            await WriteResponse(stream, new Response
-            {
-                Id = execute.Id, Last = true,
-                StatementResponse = new StatementResponse
-                {
-                    StatementId = 7,
-                    Result = new StatementResult { Frame = new Frame { IsLast = true, GraphFrame = new GraphFrame() } }
-                }
-            }, cancellationToken);
+            await RespondWithCypherGraphResult(stream, isLast: true, cancellationToken);
             var close = await ReadRequest(stream, cancellationToken);
             Assert.That(close.CloseStatementRequest.StatementId, Is.EqualTo(7));
             await WriteResponse(stream, new Response { Id = close.Id, Last = true, CloseStatementResponse = new CloseStatementResponse() },
@@ -588,6 +662,25 @@ public class PrismConnectionTests
         }
         await connection.CloseAsync();
         await secondSession;
+    }
+
+    private static async Task RespondWithCypherGraphResult(Stream stream, bool isLast, CancellationToken cancellationToken)
+    {
+        var execute = await ReadRequest(stream, cancellationToken);
+        Assert.That(execute.ExecuteUnparameterizedStatementRequest?.LanguageName, Is.EqualTo("cypher"));
+        await WriteResponse(stream, new Response
+        {
+            Id = execute.Id, StatementResponse = new StatementResponse { StatementId = 7 }
+        }, cancellationToken);
+        await WriteResponse(stream, new Response
+        {
+            Id = execute.Id, Last = true,
+            StatementResponse = new StatementResponse
+            {
+                StatementId = 7,
+                Result = new StatementResult { Frame = new Frame { IsLast = isLast, GraphFrame = new GraphFrame() } }
+            }
+        }, cancellationToken);
     }
 
     private static PolyphenyConnection OpenableConnection(TcpListener listener)

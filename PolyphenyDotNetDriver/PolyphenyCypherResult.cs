@@ -179,16 +179,7 @@ public sealed class PolyphenyCypherResult : IDisposable, IAsyncDisposable
         {
             return;
         }
-        var request = new Request
-        {
-            CloseStatementRequest = new CloseStatementRequest { StatementId = _statementId }
-        };
-        var response = await _connection.SendRecv(request).ConfigureAwait(false);
-        ValidateResponse(response, request.Id);
-        if (response.Id != request.Id || response.CloseStatementResponse == null || !response.Last)
-        {
-            throw new InvalidDataException("Expected a statement-close response.");
-        }
+        await PrismStatement.CloseAsync(_connection.SendRecv, _statementId).ConfigureAwait(false);
     }
 
     private async Task CloseAfterError()
