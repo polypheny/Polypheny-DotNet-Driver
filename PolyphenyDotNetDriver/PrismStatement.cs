@@ -63,16 +63,21 @@ internal static class PrismStatement
         return response;
     }
 
-    internal static async Task TryCloseAsync(Func<Request, Task<Response>> sendRecv, int statementId)
+    internal static async Task CloseAsync(Func<Request, Task<Response>> sendRecv, int statementId)
     {
         var request = new Request
         {
             CloseStatementRequest = new CloseStatementRequest { StatementId = statementId }
         };
+        var response = await sendRecv(request).ConfigureAwait(false);
+        PrismResponse.ValidateStatementClose(response, request.Id);
+    }
+
+    internal static async Task TryCloseAsync(Func<Request, Task<Response>> sendRecv, int statementId)
+    {
         try
         {
-            var response = await sendRecv(request).ConfigureAwait(false);
-            PrismResponse.ThrowIfError(response, request.Id);
+            await CloseAsync(sendRecv, statementId).ConfigureAwait(false);
         }
         catch
         {

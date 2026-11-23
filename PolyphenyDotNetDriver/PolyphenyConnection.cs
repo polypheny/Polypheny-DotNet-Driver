@@ -96,7 +96,7 @@ namespace PolyphenyDotNetDriver
 
         private TcpClient _client;
         private NetworkStream _stream;
-        private ulong? _pendingRequestId;
+        private readonly Queue<ulong> _pendingRequestIds = new();
         private long _sessionVersion;
         internal long SessionVersion => Volatile.Read(ref _sessionVersion);
 
@@ -123,7 +123,7 @@ namespace PolyphenyDotNetDriver
 
             try
             {
-                if (State == ConnectionState.Open)
+                if (State == ConnectionState.Open && _pendingRequestIds.Count == 0)
                 {
                     await SendRecv(new Request { DisconnectRequest = new DisconnectRequest() }).ConfigureAwait(false);
                 }
@@ -152,7 +152,7 @@ namespace PolyphenyDotNetDriver
             this._client?.Dispose();
             this._client = null;
             this._stream = null;
-            this._pendingRequestId = null;
+            this._pendingRequestIds.Clear();
             Interlocked.Exchange(ref this._isConnected, PolyphenyConnectionState.StatusDisconnected);
         }
 
@@ -371,31 +371,40 @@ namespace PolyphenyDotNetDriver
         private async Task Send(Request request, int lengthSize, CancellationToken cancellationToken)
         {
             var stream = _stream;
+            var requestId = request.Id;
             await RawSend(request.ToByteArray(), lengthSize, cancellationToken).ConfigureAwait(false);
             if (ReferenceEquals(_stream, stream))
             {
-                _pendingRequestId = request.Id;
+                _pendingRequestIds.Enqueue(requestId);
             }
         }
         
         public Task<Response> Receive(int lengthSize=8) => Receive(lengthSize, CancellationToken.None);
 
-        private async Task<Response> Receive(int lengthSize, CancellationToken cancellationToken)
+        private async Task<Response> Receive(int lengthSize, CancellationToken cancellationToken, bool statementClose = false)
         {
             var stream = _stream;
-            var requestId = _pendingRequestId;
-            var response = Response.Parser.ParseFrom(await RawReceive(lengthSize, cancellationToken).ConfigureAwait(false));
+            ulong? requestId = _pendingRequestIds.TryPeek(out var pendingId) ? pendingId : null;
+            var payload = await RawReceive(lengthSize, cancellationToken).ConfigureAwait(false);
             try
             {
+                var response = Response.Parser.ParseFrom(payload);
                 PrismResponse.ValidateRequestId(response, requestId);
-                if (response.Last && ReferenceEquals(_stream, stream))
+                if (requestId.HasValue && response.Last && ReferenceEquals(_stream, stream))
                 {
-                    _pendingRequestId = null;
+                    _pendingRequestIds.TryDequeue(out _);
                 }
-                PrismResponse.ThrowIfError(response);
+                if (statementClose)
+                {
+                    PrismResponse.ValidateStatementClose(response);
+                }
+                else
+                {
+                    PrismResponse.ThrowIfError(response);
+                }
                 return response;
             }
-            catch (InvalidDataException)
+            catch (Exception error) when (error is InvalidDataException or InvalidProtocolBufferException)
             {
                 // There may still be unread frames for the pending request.
                 if (ReferenceEquals(_stream, stream))
@@ -410,8 +419,13 @@ namespace PolyphenyDotNetDriver
 
         private async Task<Response> SendRecv(Request request, CancellationToken cancellationToken)
         {
+            if (_pendingRequestIds.Count != 0)
+            {
+                throw new InvalidOperationException("Read the pending Prism responses before starting another request.");
+            }
+            var statementClose = request.CloseStatementRequest != null;
             await Send(request, 8, cancellationToken).ConfigureAwait(false);
-            return await Receive(8, cancellationToken).ConfigureAwait(false);
+            return await Receive(8, cancellationToken, statementClose).ConfigureAwait(false);
         }
     }
 }

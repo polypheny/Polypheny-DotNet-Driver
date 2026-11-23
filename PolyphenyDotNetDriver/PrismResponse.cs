@@ -48,4 +48,14 @@ internal static class PrismResponse
             details?.HasState == true ? details.State : null,
             details?.HasErrorCode == true ? details.ErrorCode : null);
     }
+
+    internal static void ValidateStatementClose(Response response, ulong? requestId = null)
+    {
+        ThrowIfError(response, requestId);
+        ValidateRequestId(response, requestId);
+        if (response?.CloseStatementResponse == null || !response.Last)
+        {
+            throw new InvalidDataException("Expected a final Prism statement-close response.");
+        }
+    }
 }

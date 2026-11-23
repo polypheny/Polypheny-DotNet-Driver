@@ -742,6 +742,16 @@ public class PolyphenyDataReaderTests
     }
 
     [Test]
+    public async Task ReadAsync_UsesReimplementedCommandInterface()
+    {
+        using var command = new ReaderCommand { CommandText = "SELECT id FROM patients" };
+        using var reader = new PolyphenyDataReader(command);
+
+        Assert.That(await reader.ReadAsync(CancellationToken.None), Is.True);
+        Assert.That(reader.Columns, Is.EqualTo(new[] { "id" }));
+    }
+
+    [Test]
     public void ReadAsync_WithStubResultErrorReportsPrismDetails()
     {
         _mockCommand.Setup(x => x.CommandText).Returns("SELECT * FROM missing");
@@ -907,5 +917,42 @@ public class PolyphenyDataReaderTests
         {
             reader.Read();
         });
+    }
+    private sealed class ReaderCommand : PolyphenyCommand, IPolyphenyCommand
+    {
+        Task<Response> IPolyphenyCommand.SendRecv(Request request)
+        {
+            Assert.That(request.ExecuteUnparameterizedStatementRequest?.Statement, Is.EqualTo(CommandText));
+            return Task.FromResult(new Response
+            {
+                Id = request.Id,
+                StatementResponse = new StatementResponse { StatementId = 7 }
+            });
+        }
+
+        Task<Response> IPolyphenyCommand.Receive(int lengthSize)
+        {
+            Assert.That(lengthSize, Is.EqualTo(8));
+            return Task.FromResult(new Response
+            {
+                Last = true,
+                StatementResponse = new StatementResponse
+                {
+                    StatementId = 7,
+                    Result = new StatementResult
+                    {
+                        Frame = new Frame
+                        {
+                            IsLast = true,
+                            RelationalFrame = new RelationalFrame
+                            {
+                                ColumnMeta = { new ColumnMeta { ColumnName = "id" } },
+                                Rows = { new Row { Values = { new ProtoValue { Integer = new ProtoInteger { Integer = 7 } } } } }
+                            }
+                        }
+                    }
+                }
+            });
+        }
     }
 }

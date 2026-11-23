@@ -91,6 +91,9 @@ Use `SqlState` for programmatic handling and `Message` for diagnostics.
 After a statement error in a manual transaction, call `Rollback()` before
 continuing with that connection.
 
+When using the low-level `Send` and `Receive` methods, read all pending
+responses before calling `SendRecv` or starting a high-level operation.
+
 ## Query documents
 
 Supply the namespace when executing a query against a document collection. In this example, `patients` contains a collection named `symptoms`.
