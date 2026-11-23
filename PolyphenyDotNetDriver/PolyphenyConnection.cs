@@ -96,6 +96,7 @@ namespace PolyphenyDotNetDriver
 
         private TcpClient _client;
         private NetworkStream _stream;
+        private readonly object _transportLock = new();
         private readonly Queue<ulong> _pendingRequestIds = new();
         private long _sessionVersion;
         internal long SessionVersion => Volatile.Read(ref _sessionVersion);
@@ -123,7 +124,12 @@ namespace PolyphenyDotNetDriver
 
             try
             {
-                if (State == ConnectionState.Open && _pendingRequestIds.Count == 0)
+                bool canDisconnect;
+                lock (_transportLock)
+                {
+                    canDisconnect = State == ConnectionState.Open && _pendingRequestIds.Count == 0;
+                }
+                if (canDisconnect)
                 {
                     await SendRecv(new Request { DisconnectRequest = new DisconnectRequest() }).ConfigureAwait(false);
                 }
@@ -147,13 +153,20 @@ namespace PolyphenyDotNetDriver
             base.Dispose(disposing);
         }
 
-        private void DisposeTransport()
+        private void DisposeTransport(NetworkStream expectedStream = null)
         {
-            this._client?.Dispose();
-            this._client = null;
-            this._stream = null;
-            this._pendingRequestIds.Clear();
-            Interlocked.Exchange(ref this._isConnected, PolyphenyConnectionState.StatusDisconnected);
+            lock (_transportLock)
+            {
+                if (expectedStream != null && !ReferenceEquals(_stream, expectedStream))
+                {
+                    return;
+                }
+                this._client?.Dispose();
+                this._client = null;
+                this._stream = null;
+                this._pendingRequestIds.Clear();
+                Interlocked.Exchange(ref this._isConnected, PolyphenyConnectionState.StatusDisconnected);
+            }
         }
 
         public override void Open() => OpenAsync(CancellationToken.None).GetAwaiter().GetResult();
@@ -172,8 +185,12 @@ namespace PolyphenyDotNetDriver
             try
             {
                 await this._client.ConnectAsync(this._hostname, this._port, cancellationToken).ConfigureAwait(false);
-                this._stream = this._client.GetStream();
-                var recvVersion = await RawReceive(1, cancellationToken).ConfigureAwait(false);
+                NetworkStream stream;
+                lock (_transportLock)
+                {
+                    stream = this._stream = this._client.GetStream();
+                }
+                var recvVersion = await RawReceive(stream, 1, cancellationToken).ConfigureAwait(false);
                 var sendVersion = System.Text.Encoding.ASCII.GetBytes(TransportVersion);
                 if (!recvVersion.SequenceEqual(sendVersion))
                 {
@@ -286,23 +303,23 @@ namespace PolyphenyDotNetDriver
             this._password = usernameAndPassword[1];
         }
 
-        private async Task<byte[]> RawReceive(int lengthSize, CancellationToken cancellationToken = default)
+        private async Task<byte[]> RawReceive(NetworkStream stream, int lengthSize, CancellationToken cancellationToken)
         {
             if (lengthSize is < 1 or > 8)
             {
                 throw new ArgumentOutOfRangeException(nameof(lengthSize));
             }
 
-            var stream = _stream ?? throw new InvalidOperationException("The connection is closed.");
+            if (stream == null)
+            {
+                throw new InvalidOperationException("The connection is closed.");
+            }
             var lengthBuf = new byte[8];
             await ReadFully(stream, lengthBuf.AsMemory(0, lengthSize), cancellationToken).ConfigureAwait(false);
             var frameLength = BinaryPrimitives.ReadUInt64LittleEndian(lengthBuf);
             if (frameLength > int.MaxValue)
             {
-                if (ReferenceEquals(_stream, stream))
-                {
-                    DisposeTransport();
-                }
+                DisposeTransport(stream);
                 throw new IOException("The Prism frame is too large.");
             }
 
@@ -327,15 +344,13 @@ namespace PolyphenyDotNetDriver
             }
             catch (Exception error) when (error is IOException or ObjectDisposedException)
             {
-                if (ReferenceEquals(_stream, stream))
-                {
-                    DisposeTransport();
-                }
+                DisposeTransport(stream);
                 throw;
             }
         }
 
-        private async Task RawSend(byte[] serialized, int lengthSize, CancellationToken cancellationToken = default)
+        private async Task<NetworkStream> RawSend(byte[] serialized, int lengthSize, CancellationToken cancellationToken,
+            ulong? requestId = null, bool requireIdle = false)
         {
             if (lengthSize is < 1 or > 8)
             {
@@ -350,49 +365,74 @@ namespace PolyphenyDotNetDriver
 
             var lengthBuf = new byte[8];
             BinaryPrimitives.WriteUInt64LittleEndian(lengthBuf, (ulong)serialized.Length);
-            var stream = _stream ?? throw new InvalidOperationException("The connection is closed.");
+            cancellationToken.ThrowIfCancellationRequested();
+            NetworkStream stream;
+            lock (_transportLock)
+            {
+                stream = _stream ?? throw new InvalidOperationException("The connection is closed.");
+                if (requireIdle && _pendingRequestIds.Count != 0)
+                {
+                    throw new InvalidOperationException("Read the pending Prism responses before starting another request.");
+                }
+                if (requestId.HasValue)
+                {
+                    // A reader may already be waiting when the first request bytes go out.
+                    _pendingRequestIds.Enqueue(requestId.Value);
+                }
+            }
             try
             {
                 await stream.WriteAsync(lengthBuf.AsMemory(0, lengthSize), cancellationToken).ConfigureAwait(false);
                 await stream.WriteAsync(serialized, cancellationToken).ConfigureAwait(false);
+                return stream;
             }
-            catch (Exception error) when (error is IOException or ObjectDisposedException)
+            catch (Exception error) when (error is IOException or ObjectDisposedException or OperationCanceledException)
             {
-                if (ReferenceEquals(_stream, stream))
-                {
-                    DisposeTransport();
-                }
+                DisposeTransport(stream);
                 throw;
             }
         }
 
         public Task Send(Request req, int lengthSize=8) => Send(req, lengthSize, CancellationToken.None);
 
-        private async Task Send(Request request, int lengthSize, CancellationToken cancellationToken)
+        private async Task<NetworkStream> Send(Request request, int lengthSize, CancellationToken cancellationToken,
+            bool requireIdle = false)
         {
-            var stream = _stream;
             var requestId = request.Id;
-            await RawSend(request.ToByteArray(), lengthSize, cancellationToken).ConfigureAwait(false);
-            if (ReferenceEquals(_stream, stream))
-            {
-                _pendingRequestIds.Enqueue(requestId);
-            }
+            return await RawSend(request.ToByteArray(), lengthSize, cancellationToken, requestId, requireIdle).ConfigureAwait(false);
         }
-        
-        public Task<Response> Receive(int lengthSize=8) => Receive(lengthSize, CancellationToken.None);
 
-        private async Task<Response> Receive(int lengthSize, CancellationToken cancellationToken, bool statementClose = false)
+        public Task<Response> Receive(int lengthSize=8)
         {
-            var stream = _stream;
-            ulong? requestId = _pendingRequestIds.TryPeek(out var pendingId) ? pendingId : null;
-            var payload = await RawReceive(lengthSize, cancellationToken).ConfigureAwait(false);
+            NetworkStream stream;
+            lock (_transportLock)
+            {
+                stream = _stream;
+            }
+            return Receive(stream, lengthSize, CancellationToken.None);
+        }
+
+        private async Task<Response> Receive(NetworkStream stream, int lengthSize, CancellationToken cancellationToken,
+            bool statementClose = false)
+        {
+            var payload = await RawReceive(stream, lengthSize, cancellationToken).ConfigureAwait(false);
             try
             {
                 var response = Response.Parser.ParseFrom(payload);
-                PrismResponse.ValidateRequestId(response, requestId);
-                if (requestId.HasValue && response.Last && ReferenceEquals(_stream, stream))
+                lock (_transportLock)
                 {
-                    _pendingRequestIds.TryDequeue(out _);
+                    if (!ReferenceEquals(_stream, stream))
+                    {
+                        throw new IOException("The Prism connection closed while receiving a response.");
+                    }
+                    if (_pendingRequestIds.TryPeek(out var requestId))
+                    {
+                        PrismResponse.ValidateRequestId(response, requestId);
+                        if (response.Last)
+                        {
+                            _pendingRequestIds.Dequeue();
+                        }
+                    }
                 }
                 if (statementClose)
                 {
@@ -407,10 +447,7 @@ namespace PolyphenyDotNetDriver
             catch (Exception error) when (error is InvalidDataException or InvalidProtocolBufferException)
             {
                 // There may still be unread frames for the pending request.
-                if (ReferenceEquals(_stream, stream))
-                {
-                    DisposeTransport();
-                }
+                DisposeTransport(stream);
                 throw;
             }
         }
@@ -419,13 +456,9 @@ namespace PolyphenyDotNetDriver
 
         private async Task<Response> SendRecv(Request request, CancellationToken cancellationToken)
         {
-            if (_pendingRequestIds.Count != 0)
-            {
-                throw new InvalidOperationException("Read the pending Prism responses before starting another request.");
-            }
             var statementClose = request.CloseStatementRequest != null;
-            await Send(request, 8, cancellationToken).ConfigureAwait(false);
-            return await Receive(8, cancellationToken, statementClose).ConfigureAwait(false);
+            var stream = await Send(request, 8, cancellationToken, requireIdle: true).ConfigureAwait(false);
+            return await Receive(stream, 8, cancellationToken, statementClose).ConfigureAwait(false);
         }
     }
 }

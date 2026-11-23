@@ -372,6 +372,44 @@ public class PrismConnectionTests
     }
 
     [Test]
+    public async Task ReceiveStartedBeforeSend_LeavesNoPendingResponse()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var server = RunServer(listener, 4, true, async (stream, cancellationToken) =>
+        {
+            foreach (var expectedId in new ulong[] { 41, 42 })
+            {
+                var request = await ReadRequest(stream, cancellationToken);
+                Assert.That(request.Id, Is.EqualTo(expectedId));
+                Assert.That(request.ConnectionCheckRequest, Is.Not.Null);
+                await WriteResponse(stream, new Response
+                {
+                    Id = request.Id, Last = true, ConnectionCheckResponse = new ConnectionCheckResponse()
+                }, cancellationToken);
+            }
+        }, timeout.Token);
+
+        using var connection = OpenableConnection(listener);
+        await connection.OpenAsync(timeout.Token);
+        var receiving = connection.Receive();
+        Assert.That(receiving.IsCompleted, Is.False);
+        await connection.Send(new Request { Id = 41, ConnectionCheckRequest = new ConnectionCheckRequest() });
+        var first = await receiving.WaitAsync(timeout.Token);
+        Assert.That(first.Id, Is.EqualTo(41));
+        Assert.That(first.Last, Is.True);
+
+        var second = await connection.SendRecv(new Request { Id = 42, ConnectionCheckRequest = new ConnectionCheckRequest() })
+            .WaitAsync(timeout.Token);
+        Assert.That(second.Id, Is.EqualTo(42));
+        Assert.That(second.ConnectionCheckResponse, Is.Not.Null);
+        Assert.That(connection.State, Is.EqualTo(ConnectionState.Open));
+        await connection.CloseAsync();
+        await server;
+    }
+
+    [Test]
     public async Task PreparedExecution_RetainsStatementForRetryAfterErrorAndRollback()
     {
         const string sql = "INSERT INTO patients VALUES (?)";
