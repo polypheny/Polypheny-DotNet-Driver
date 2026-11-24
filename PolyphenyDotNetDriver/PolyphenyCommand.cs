@@ -217,7 +217,14 @@ namespace PolyphenyDotNetDriver
         public PolyphenyCypherResult ExecuteCypher(string namespaceName, int fetchSize = 100)
             => ExecuteCypherAsync(namespaceName, fetchSize).GetAwaiter().GetResult();
 
-        public async Task<PolyphenyCypherResult> ExecuteCypherAsync(string namespaceName, int fetchSize = 100)
+        public Task<PolyphenyCypherResult> ExecuteCypherAsync(string namespaceName, int fetchSize = 100)
+            => ExecuteCypherAsync(namespaceName, null, fetchSize);
+
+        /// <summary>Executes Cypher with named Prism parameters on a server with prepared Cypher support.</summary>
+        public PolyphenyCypherResult ExecuteCypher(string namespaceName, IReadOnlyDictionary<string, ProtoValue> parameters, int fetchSize = 100)
+            => ExecuteCypherAsync(namespaceName, parameters, fetchSize).GetAwaiter().GetResult();
+
+        public async Task<PolyphenyCypherResult> ExecuteCypherAsync(string namespaceName, IReadOnlyDictionary<string, ProtoValue> parameters, int fetchSize = 100)
         {
             var executionConnection = connection;
             var statement = CommandText;
@@ -244,12 +251,61 @@ namespace PolyphenyDotNetDriver
             }
             if (_isPrepared || ParameterValues?.Length > 0 || _parameterCollection.Count > 0)
             {
-                throw new NotSupportedException("Prism does not support prepared Cypher statements or parameters.");
+                throw new NotSupportedException("Use the named Prism parameter overload to bind Cypher parameters.");
             }
 
             int? statementId = null;
             try
             {
+                if (parameters != null)
+                {
+                    var bindings = new NamedParameters();
+                    foreach (var parameter in parameters)
+                    {
+                        if (string.IsNullOrEmpty(parameter.Key) || parameter.Value == null
+                            || parameter.Value.ValueCase == ProtoValue.ValueOneofCase.None)
+                        {
+                            throw new ArgumentException("Each Cypher parameter needs a name and a Prism value.", nameof(parameters));
+                        }
+                        bindings.Parameters.Add(parameter.Key, parameter.Value);
+                    }
+                    var prepare = new Request
+                    {
+                        PrepareNamedStatementRequest = new PrepareStatementRequest
+                        {
+                            LanguageName = "cypher",
+                            NamespaceName = namespaceName,
+                            Statement = statement
+                        }
+                    };
+                    var signature = await executionConnection.SendRecv(prepare).ConfigureAwait(false);
+                    PolyphenyCypherResult.ValidateResponse(signature, prepare.Id);
+                    if (!PrismStatement.IsCurrentSession(executionConnection, sessionVersion)
+                        || !signature.Last || signature.PreparedStatementSignature?.StatementId is not > 0)
+                    {
+                        throw new InvalidOperationException("Expected a prepared Cypher statement signature.");
+                    }
+                    statementId = signature.PreparedStatementSignature.StatementId;
+
+                    var execute = new Request
+                    {
+                        ExecuteNamedStatementRequest = new ExecuteNamedStatementRequest
+                        {
+                            StatementId = statementId.Value,
+                            Parameters = bindings,
+                            FetchSize = fetchSize
+                        }
+                    };
+                    var prepared = await executionConnection.SendRecv(execute).ConfigureAwait(false);
+                    PolyphenyCypherResult.ValidateResponse(prepared, execute.Id);
+                    if (!PrismStatement.IsCurrentSession(executionConnection, sessionVersion)
+                        || !prepared.Last || prepared.StatementResult == null)
+                    {
+                        throw new InvalidOperationException("Expected a prepared Cypher statement result.");
+                    }
+                    return new PolyphenyCypherResult(executionConnection, statementId.Value, fetchSize, prepared.StatementResult, sessionVersion);
+                }
+
                 var request = new Request
                 {
                     ExecuteUnparameterizedStatementRequest = new ExecuteUnparameterizedStatementRequest

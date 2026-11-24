@@ -173,7 +173,8 @@ Results belong to the session that created them. Reopening a connection does not
 
 Connections use manual transactions by default. Use `connection.BeginTransaction().Commit()` or `Rollback()`
 for graph writes. For autocommit, construct a connection with `new PolyphenyConfig { AutoCommit = true }`.
-The driver's Cypher execution APIs accept one direct, parameter-free statement per request.
+Use the `ExecuteCypher` overload with an `IReadOnlyDictionary<string, ProtoValue>` to bind named parameters on a server with prepared Cypher support. Use the names without the `$` prefix as keys.
+On supported servers, set `CypherResultFormat` to `relational` with `connection.SetClientInfoProperties(...)` to retain rows and column metadata for graph-only projections.
 
 ## Discover entity metadata
 

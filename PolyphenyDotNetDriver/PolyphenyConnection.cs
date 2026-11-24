@@ -255,6 +255,31 @@ namespace PolyphenyDotNetDriver
                 ?? throw new InvalidOperationException("Expected a Prism entities response.");
         }
 
+        /// <summary>Sets Prism client information properties on this session.</summary>
+        public void SetClientInfoProperties(IReadOnlyDictionary<string, string> properties)
+            => SetClientInfoPropertiesAsync(properties).GetAwaiter().GetResult();
+
+        public async Task SetClientInfoPropertiesAsync(IReadOnlyDictionary<string, string> properties)
+        {
+            if (State != ConnectionState.Open)
+            {
+                throw new InvalidOperationException("Open the connection before setting client information properties.");
+            }
+            var values = new ClientInfoProperties();
+            foreach (var property in properties)
+            {
+                values.Properties.Add(property.Key, property.Value);
+            }
+            var request = new Request { SetClientInfoPropertiesRequest = values };
+            var response = await SendRecv(request).ConfigureAwait(false);
+            PrismResponse.ThrowIfError(response, request.Id);
+            PrismResponse.ValidateRequestId(response, request.Id);
+            if (!response.Last || response.SetClientInfoPropertiesResponse == null)
+            {
+                throw new InvalidDataException("Expected confirmation of client information properties.");
+            }
+        }
+
         public async Task Ping(CancellationToken cancellationToken = default)
         {
             var status = this._isConnected;

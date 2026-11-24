@@ -60,6 +60,19 @@ public class CypherIntegrationTests
     }
 
     [Test]
+    public void BindsNumericNamedParameterAndKeepsGraphRows()
+    {
+        using var connection = Connect();
+        connection.SetClientInfoProperties(new Dictionary<string, string> { ["CypherResultFormat"] = "relational" });
+        using var command = new PolyphenyCommand().WithConnection(connection)
+            .WithCommandText("MATCH (n:Person) WHERE n.id = $1 RETURN n");
+        using var result = command.ExecuteCypher(_namespace, new Dictionary<string, ProtoValue> { ["1"] = ProtoHelper.ToProtoValue(2) });
+        Assert.That(result.Kind, Is.EqualTo(CypherResultKind.Rows));
+        Assert.That(result.Columns.Single().ColumnLabel, Is.EqualTo("n"));
+        Assert.That(((GraphNode) result.Rows.Single().Single()).Properties["name"], Is.EqualTo("Bob"));
+    }
+
+    [Test]
     public void PagesNodesAndKeepsEveryField()
     {
         using var connection = Connect();
