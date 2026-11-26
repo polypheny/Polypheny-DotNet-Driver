@@ -33,6 +33,9 @@ namespace PolyphenyDotNetDriver
 {
     public class PolyphenyConnection : DbConnection, IPolyphenyConnection
     {
+        // A nested Prism value spans multiple message levels per map or list level.
+        private const int ResponseRecursionLimit = 256;
+
         protected override PolyphenyTransaction BeginDbTransaction(IsolationLevel isolationLevel)
         {
             return new PolyphenyTransaction(this, isolationLevel);
@@ -255,6 +258,31 @@ namespace PolyphenyDotNetDriver
                 ?? throw new InvalidOperationException("Expected a Prism entities response.");
         }
 
+        /// <summary>Sets Prism client information properties on this session.</summary>
+        public void SetClientInfoProperties(IReadOnlyDictionary<string, string> properties)
+            => SetClientInfoPropertiesAsync(properties).GetAwaiter().GetResult();
+
+        public async Task SetClientInfoPropertiesAsync(IReadOnlyDictionary<string, string> properties)
+        {
+            if (State != ConnectionState.Open)
+            {
+                throw new InvalidOperationException("Open the connection before setting client information properties.");
+            }
+            var values = new ClientInfoProperties();
+            foreach (var property in properties)
+            {
+                values.Properties.Add(property.Key, property.Value);
+            }
+            var request = new Request { SetClientInfoPropertiesRequest = values };
+            var response = await SendRecv(request).ConfigureAwait(false);
+            PrismResponse.ThrowIfError(response, request.Id);
+            PrismResponse.ValidateRequestId(response, request.Id);
+            if (!response.Last || response.SetClientInfoPropertiesResponse == null)
+            {
+                throw new InvalidDataException("Expected confirmation of client information properties.");
+            }
+        }
+
         public async Task Ping(CancellationToken cancellationToken = default)
         {
             var status = this._isConnected;
@@ -418,7 +446,9 @@ namespace PolyphenyDotNetDriver
             var payload = await RawReceive(stream, lengthSize, cancellationToken).ConfigureAwait(false);
             try
             {
-                var response = Response.Parser.ParseFrom(payload);
+                using var input = CodedInputStream.CreateWithLimits(
+                    new MemoryStream(payload, writable: false), int.MaxValue, ResponseRecursionLimit);
+                var response = Response.Parser.ParseFrom(input);
                 lock (_transportLock)
                 {
                     if (!ReferenceEquals(_stream, stream))
