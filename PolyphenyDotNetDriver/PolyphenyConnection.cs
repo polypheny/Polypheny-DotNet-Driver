@@ -33,6 +33,9 @@ namespace PolyphenyDotNetDriver
 {
     public class PolyphenyConnection : DbConnection, IPolyphenyConnection
     {
+        // A nested Prism value spans multiple message levels per map or list level.
+        private const int ResponseRecursionLimit = 256;
+
         protected override PolyphenyTransaction BeginDbTransaction(IsolationLevel isolationLevel)
         {
             return new PolyphenyTransaction(this, isolationLevel);
@@ -443,7 +446,9 @@ namespace PolyphenyDotNetDriver
             var payload = await RawReceive(stream, lengthSize, cancellationToken).ConfigureAwait(false);
             try
             {
-                var response = Response.Parser.ParseFrom(payload);
+                using var input = CodedInputStream.CreateWithLimits(
+                    new MemoryStream(payload, writable: false), int.MaxValue, ResponseRecursionLimit);
+                var response = Response.Parser.ParseFrom(input);
                 lock (_transportLock)
                 {
                     if (!ReferenceEquals(_stream, stream))
